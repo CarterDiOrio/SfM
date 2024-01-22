@@ -8,8 +8,11 @@
 
 namespace sfm
 {
-class View
+struct View
 {
+  View(cv::Mat image, cv::Mat K)
+  : image{image}, K{K} {}
+
   /// @brief The image of the view
   cv::Mat image;
 
