@@ -10,14 +10,16 @@ namespace sfm
 {
 struct View
 {
-  View(cv::Mat image, cv::Mat K)
-  : image{image}, K{K} {}
+  View(cv::Mat image, cv::Mat K, size_t id)
+  : image{image}, K{K}, image_id{id} {}
 
   /// @brief The image of the view
   cv::Mat image;
 
   /// @brief The camera matrix
   cv::Mat K;
+
+  size_t image_id;
 };
 }
 

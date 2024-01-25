@@ -19,14 +19,15 @@ int main()
   cv::Mat frame;
   std::vector<std::shared_ptr<sfm::View>> views;
 
-  int i = 0;
+  size_t frame_counter = 0;
+  size_t view_id = 0;
   while (capture.read(frame)) {
-    if (i % 10 == 0) {
+    if (frame_counter % 10 == 0) {
       views.push_back(
-        std::make_shared<sfm::View>(frame.clone(), K)
+        std::make_shared<sfm::View>(frame.clone(), K, view_id++)
       );
     }
-    i++;
+    frame_counter++;
   }
 
   sfm::FeatureDetector feature_detector{cv::ORB::create(10000)};
@@ -57,5 +58,6 @@ int main()
     cv::imshow("matches", out);
     cv::waitKey(0);
   }
+
   return 0;
 }

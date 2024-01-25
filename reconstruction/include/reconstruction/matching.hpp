@@ -14,7 +14,6 @@ class Match
 {
 public:
   Match();
-
   Match(FeatureView view1, FeatureView view2, std::vector<cv::DMatch> matches);
 
   FeatureView view1;

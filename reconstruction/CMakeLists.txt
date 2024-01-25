@@ -25,7 +25,9 @@ add_executable(reconstruct
                 src/reconstruct.cpp 
                 src/features.cpp 
                 src/matching.cpp
-                src/verification.cpp)
+                src/verification.cpp
+                src/map.cpp
+                src/keyframe.cpp)
 
 # Enable c++17 support.
 # Public causes the features to propagate to anything
