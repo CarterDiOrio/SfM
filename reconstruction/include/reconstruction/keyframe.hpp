@@ -32,6 +32,24 @@ public:
     return T_kw;
   }
 
+  /// @brief Gets the number of keypoints in the keyframe
+  /// @return The number of keypoints
+  inline size_t num_keypoints()
+  {
+    return keypoints.size();
+  }
+
+  /// @brief Gets the keypoint and description
+  /// @param i the id/idx of the keypoint
+  /// @return a pair of {keypoint, description}
+  inline std::pair<cv::KeyPoint, cv::Mat> operator[](int i)
+  {
+    return {
+      keypoints[i],
+      descriptions[i]
+    };
+  }
+
 private:
   /// @brief The camera intrinsics matrix
   cv::Matx33d K;

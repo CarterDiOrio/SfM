@@ -9,7 +9,7 @@ namespace sfm
 class MapPoint
 {
 public:
-  MapPoint(cv::Mat descriptor, cv::Mat3d position);
+  MapPoint(cv::Mat descriptor, cv::Mat3d position, size_t keyframe_id);
 
   /// @brief Gets the position of the map point in the world frame
   /// @return the position of the map point in world frame
@@ -32,6 +32,9 @@ private:
   /// @brief The 3D position of the point in world space
   cv::Mat3d pos;
 
+  /// @brief The ids of the keyframes this point is visible in
+  std::vector<size_t> keyframe_ids;
+
   /// @brief the minimum distance the point can be observed at according to
   /// orb scale and invariant constraints
   double min{0.0};
@@ -41,6 +44,7 @@ private:
   double max{10.0};
 };
 
+/// @brief A map of keyframes and map points
 class Map
 {
 
