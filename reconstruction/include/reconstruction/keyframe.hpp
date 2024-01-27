@@ -4,8 +4,11 @@
 #include <vector>
 #include <opencv2/core.hpp>
 
+#include "reconstruction/pinhole.hpp"
+
 namespace sfm
 {
+
 class KeyFrame
 {
 public:
@@ -15,12 +18,12 @@ public:
   /// @param keypoints The observed keypoints in the image
   /// @param descriptions The descriptions of each keypoint
   KeyFrame(
-    cv::Matx33d K, cv::Matx44d T_kw, std::vector<cv::KeyPoint> keypoints,
+    PinholeModel K, cv::Matx44d T_kw, std::vector<cv::KeyPoint> keypoints,
     std::vector<cv::Mat> descriptions);
 
   /// @brief Gets the 3x3 camera calibration matrix
   /// @return the camera calibration matrix
-  inline cv::Matx33d camera_calibration()
+  inline PinholeModel camera_calibration()
   {
     return K;
   }
@@ -52,7 +55,7 @@ public:
 
 private:
   /// @brief The camera intrinsics matrix
-  cv::Matx33d K;
+  PinholeModel K;
 
   /// @brief The homogenous transformation matrix from the world to the camera
   /// frame.

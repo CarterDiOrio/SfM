@@ -3,6 +3,8 @@
 
 #include <opencv2/features2d.hpp>
 
+#include "reconstruction/keyframe.hpp"
+
 namespace sfm
 {
 /// @brief Models a 3D point in the map
@@ -47,7 +49,21 @@ private:
 /// @brief A map of keyframes and map points
 class Map
 {
+public:
+  Map();
 
+  /// @brief Checks if the map is empty or not
+  /// @return returns true if the map is empty
+  bool is_empty();
+
+  /// @brief Adds a KeyFrame and returns the id of the keyframe
+  /// @param frame the key frame to add
+  /// @return the id of the added key frame
+  size_t add_keyframe(const KeyFrame & frame);
+
+private:
+  std::vector<KeyFrame> keyframes;
+  std::vector<MapPoint> mappoints;
 };
 }
 

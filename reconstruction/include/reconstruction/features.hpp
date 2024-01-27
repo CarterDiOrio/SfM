@@ -1,41 +1,29 @@
 #ifndef INC_GUARD_FEATURES_HPP
 #define INC_GUARD_FEATURES_HPP
 
-#include "view.hpp"
-#include <opencv2/imgproc.hpp>
+#include "keyframe.hpp"
+#include <opencv2/features2d.hpp>
 
 namespace sfm
 {
 
-// template<class T>
-// using shared_vector = std::vector<std::shared_ptr<T>>;
+/// @brief Detects features and computes their descriptions within the img
+/// @param img The image to detect ORB features in
+/// @return a pair of two vectors {keypoints and descriptions}
+std::pair<std::vector<cv::KeyPoint>, std::vector<cv::Mat>> detect_features(
+  const cv::Mat & img, std::shared_ptr<cv::ORB> feature_detector
+);
 
-struct FeatureView
-{
-  std::shared_ptr<View> view;
-  std::vector<cv::KeyPoint> features;
-  cv::Mat feature_descriptors;
-};
+/// @brief Deprojects each keypoint to a 3D point in the camera frame
+/// @param keypoints the keypoints to deproject
+/// @param depth the depth image
+/// @param model the pinhole camera model
+/// @return a vector of 3x1 vectors for each 3D point
+std::vector<cv::Matx31d> deproject_keypoints(
+  const std::vector<cv::KeyPoint> & keypoints, const cv::Mat & depth, const PinholeModel & model);
 
-class FeatureDetector
-{
-public:
-  explicit FeatureDetector(std::shared_ptr<cv::Feature2D> detector);
 
-  /// @brief Finds features in a single view
-  /// @param view The view to find features in
-  /// @return A FeatureView containing the feature information
-  FeatureView detectFeaturesInImage(const std::shared_ptr<View> view) const;
-
-  /// @brief Finds featues in multiple views
-  /// @param views the views to find the features in
-  /// @return a vector of feature views (see detectFeaturesInImage for details)
-  std::vector<FeatureView> detectFeaturesInImages(const std::vector<std::shared_ptr<View>> & views)
-  const;
-
-private:
-  std::shared_ptr<cv::Feature2D> fdetector;
-};
 }
+
 
 #endif

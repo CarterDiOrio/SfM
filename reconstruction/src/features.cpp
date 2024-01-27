@@ -1,29 +1,19 @@
 #include "reconstruction/features.hpp"
+#include <opencv2/features2d.hpp>
 
 namespace sfm
 {
-FeatureDetector::FeatureDetector(std::shared_ptr<cv::Feature2D> detector)
-: fdetector{detector}
-{}
 
-FeatureView FeatureDetector::detectFeaturesInImage(const std::shared_ptr<View> view) const
+std::pair<std::vector<cv::KeyPoint>, std::vector<cv::Mat>> detect_features(
+  const cv::Mat & img, std::shared_ptr<cv::ORB> feature_detector
+)
 {
-  FeatureView feature_view;
-  fdetector->detectAndCompute(
-    view->image,
-    cv::noArray(), feature_view.features, feature_view.feature_descriptors);
-  feature_view.view = view;
-  return feature_view;
-}
-
-std::vector<FeatureView> FeatureDetector::detectFeaturesInImages(
-  const std::vector<std::shared_ptr<View>> & views) const
-{
-  std::vector<FeatureView> feature_views;
-  int image = 0;
-  for (const auto & view: views) {
-    feature_views.emplace_back(detectFeaturesInImage(view));
-  }
-  return feature_views;
+  std::vector<cv::KeyPoint> keypoints;
+  std::vector<cv::Mat> descriptors;
+  feature_detector->detectAndCompute(img, cv::noArray(), keypoints, descriptors);
+  return {
+    keypoints,
+    descriptors
+  };
 }
 }

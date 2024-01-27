@@ -24,11 +24,12 @@ add_executable(essential src/essential.cpp)
 add_executable(reconstruct 
                 src/reconstruct.cpp 
                 src/features.cpp 
-                src/matching.cpp
                 src/verification.cpp
                 src/map.cpp
                 src/keyframe.cpp
-                src/recording.cpp)
+                src/recording.cpp
+                src/pinhole.cpp
+                src/sfm.cpp)
 
 # Enable c++17 support.
 # Public causes the features to propagate to anything
