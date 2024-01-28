@@ -4,8 +4,6 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/features2d.hpp>
 
-#include "reconstruction/verification.hpp"
-
 #include "reconstruction/recording.hpp"
 
 int main()

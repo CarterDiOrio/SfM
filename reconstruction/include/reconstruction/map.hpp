@@ -2,8 +2,12 @@
 #define INC_GUARD_MAP_HPP
 
 #include <opencv2/features2d.hpp>
+#include <Eigen/Dense>
+#include <pcl/point_cloud.h>
 
 #include "reconstruction/keyframe.hpp"
+#include <pcl/point_types.h>
+
 
 namespace sfm
 {
@@ -11,11 +15,11 @@ namespace sfm
 class MapPoint
 {
 public:
-  MapPoint(cv::Mat descriptor, cv::Mat3d position, size_t keyframe_id);
+  MapPoint(cv::Mat descriptor, Eigen::Vector3d position, size_t keyframe_id);
 
   /// @brief Gets the position of the map point in the world frame
   /// @return the position of the map point in world frame
-  inline cv::Mat position()
+  inline Eigen::Vector3d position()
   {
     return pos;
   }
@@ -27,12 +31,16 @@ public:
     return desc;
   }
 
+  /// @brief Adds another keyframe where this point is visible from
+  /// @param k_id the id of the keyframe
+  void add_keyframe(size_t k_id);
+
 private:
   /// @brief The orb descriptor that best matches the
   cv::Mat desc;
 
   /// @brief The 3D position of the point in world space
-  cv::Mat3d pos;
+  Eigen::Vector3d pos;
 
   /// @brief The ids of the keyframes this point is visible in
   std::vector<size_t> keyframe_ids;
@@ -61,8 +69,27 @@ public:
   /// @return the id of the added key frame
   size_t add_keyframe(const KeyFrame & frame);
 
+  /// @brief Adds map points to the map
+  /// @param k_id the initial keyframe id to associate the map points with
+  /// @param points the 3D locations of the points in the key frame's frame.
+  /// @param descriptions the ORB descriptors of the map points
+  void create_mappoints(
+    size_t k_id, const std::vector<Eigen::Vector3d> points,
+    const std::vector<cv::Mat> descriptions);
+
+  /// @brief Gets a keyframe with the given keyframe id
+  /// @param k_id the id of the keyframe
+  /// @return The keyframe
+  inline const KeyFrame & get_keyframe(size_t k_id) const
+  {
+    return keyframes.at(k_id);
+  }
+
 private:
+  /// @brief all the key frames in the map
   std::vector<KeyFrame> keyframes;
+
+  /// @brief all the map points in the map
   std::vector<MapPoint> mappoints;
 };
 }

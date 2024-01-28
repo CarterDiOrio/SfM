@@ -2,7 +2,7 @@
 
 namespace sfm
 {
-cv::Matx31d deproject_pixel_to_point(const PinholeModel & model, int px, int py, double depth)
+Eigen::Vector3d deproject_pixel_to_point(const PinholeModel & model, int px, int py, double depth)
 {
   /// convert pixel to canonical camera plane, can be projected to depth by
   /// multiplication from here

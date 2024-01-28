@@ -3,6 +3,8 @@
 
 #include <opencv2/core.hpp>
 
+#include <Eigen/Dense>
+
 namespace sfm
 {
 /// @brief Camera calibration values for pinhole camera.
@@ -28,7 +30,7 @@ struct PinholeModel
 /// @param py the y coordinate in the image plane
 /// @param depth the depth of the point in meters
 /// @return a 3x1 column vector of the 3D point
-cv::Matx31d deproject_pixel_to_point(const PinholeModel & model, int px, int py, double depth);
+Eigen::Vector3d deproject_pixel_to_point(const PinholeModel & model, int px, int py, double depth);
 
 }
 

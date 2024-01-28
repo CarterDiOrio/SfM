@@ -15,8 +15,11 @@ project(reconstruction)
 # https://eigen.tuxfamily.org/dox/TopicCMakeGuide.html
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(OpenCV REQUIRED)
-find_package(TBB REQUIRED COMPONENTS tbb)
+find_package(PCL 1.3 REQUIRED)
 
+include_directories(${PCL_INCLUDE_DIRS})
+link_directories(${PCL_LIBRARY_DIRS})
+add_definitions(${PCL_DEFINITIONS})
 
 # Create an executable from the following source code files
 # The Name of the executable creates a cmake "target"
@@ -24,7 +27,6 @@ add_executable(essential src/essential.cpp)
 add_executable(reconstruct 
                 src/reconstruct.cpp 
                 src/features.cpp 
-                src/verification.cpp
                 src/map.cpp
                 src/keyframe.cpp
                 src/recording.cpp
@@ -42,7 +44,7 @@ target_compile_features(essential PUBLIC cxx_std_17)
 # that need to be linked
 # and paths to th locations of header files
 target_link_libraries(essential Eigen3::Eigen ${OpenCV_LIBS})
-target_link_libraries(reconstruct Eigen3::Eigen ${OpenCV_LIBS} tbb)
+target_link_libraries(reconstruct Eigen3::Eigen ${OpenCV_LIBS} ${PCL_LIBRARIES})
 
 target_include_directories(reconstruct
     PUBLIC

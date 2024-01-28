@@ -25,9 +25,11 @@ public:
   void add_frame_ordered(const cv::Mat & frame, const cv::Mat & depth);
 
 private:
-  const std::shared_ptr<cv::BFMatcher> matcher;
+  const cv::BFMatcher matcher;
   const std::shared_ptr<cv::ORB> detector;
   const PinholeModel model;
+
+  size_t previous_k_id = -1;
 
   Map map;
 

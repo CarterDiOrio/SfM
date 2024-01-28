@@ -19,7 +19,7 @@ std::pair<std::vector<cv::KeyPoint>, std::vector<cv::Mat>> detect_features(
 /// @param depth the depth image
 /// @param model the pinhole camera model
 /// @return a vector of 3x1 vectors for each 3D point
-std::vector<cv::Matx31d> deproject_keypoints(
+std::vector<Eigen::Vector3d> deproject_keypoints(
   const std::vector<cv::KeyPoint> & keypoints, const cv::Mat & depth, const PinholeModel & model);
 
 
