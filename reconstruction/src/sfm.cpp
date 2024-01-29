@@ -10,7 +10,7 @@ namespace sfm
 {
 Reconstruction::Reconstruction(PinholeModel model)
 : matcher{cv::BFMatcher::create(cv::NORM_HAMMING)},
-  detector{cv::ORB::create(2000)},
+  detector{cv::ORB::create(10000)},
   model{model}
 {}
 
