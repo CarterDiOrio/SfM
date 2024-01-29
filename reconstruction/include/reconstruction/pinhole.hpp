@@ -32,6 +32,11 @@ struct PinholeModel
 /// @return a 3x1 column vector of the 3D point
 Eigen::Vector3d deproject_pixel_to_point(const PinholeModel & model, int px, int py, double depth);
 
+/// @brief Convers the PinholeModel to an opencv matrix
+/// @param model the camera model
+/// @return an opencv mat that is the 3x3 camera calibration matrix
+cv::Mat model_to_mat(const PinholeModel & model);
+
 }
 
 #endif

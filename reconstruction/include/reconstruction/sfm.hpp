@@ -24,8 +24,15 @@ public:
   /// @param depth the corresponding depth image of the frame
   void add_frame_ordered(const cv::Mat & frame, const cv::Mat & depth);
 
+  /// @brief Gets a const reference to the internal map
+  /// @return the map
+  inline const Map & get_map() const
+  {
+    return map;
+  }
+
 private:
-  const cv::BFMatcher matcher;
+  const std::shared_ptr<cv::BFMatcher> matcher;
   const std::shared_ptr<cv::ORB> detector;
   const PinholeModel model;
 
@@ -38,6 +45,14 @@ private:
   /// @param frame the frame to initialize the reconstruction with
   /// @param depth the corresponding depth image
   void initialize_reconstruction(const cv::Mat & frame, const cv::Mat & depth);
+
+  /// @brief Performs Perspective-n-Point between the image points and the world points
+  /// @param image_points the 2D points in the image
+  /// @param world_points the corresponding 3D world peoints
+  /// @return the 4x4 transformation matrix of the camera to the world
+  Eigen::Matrix4d pnp(
+    const std::vector<cv::Point2d> & image_points,
+    const std::vector<Eigen::Vector3d> & world_points);
 };
 }
 

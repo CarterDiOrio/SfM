@@ -18,8 +18,6 @@ std::optional<std::pair<cv::Mat, cv::Mat>> RecordingReader::read_frames()
   auto cpath = std::filesystem::canonical(dir / cfile);
   auto dpath = std::filesystem::canonical(dir / dfile);
 
-  std::cout << cpath.string() << std::endl;
-  std::cout << dpath.string() << std::endl;
   // if (!std::filesystem::exists(cfile) || !std::filesystem::exists(dfile)) {
   //   return {};
   // }

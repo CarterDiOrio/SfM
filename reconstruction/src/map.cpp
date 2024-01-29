@@ -3,10 +3,14 @@
 #include <algorithm>
 #include <pcl/filters/frustum_culling.h>
 #include <memory>
+#include <iostream>
 
 namespace sfm
 {
-MapPoint::MapPoint(cv::Mat descriptor, Eigen::Vector3d position, size_t keyframe_id)
+MapPoint::MapPoint(
+  cv::Mat descriptor, Eigen::Vector3d position, size_t keyframe_id,
+  Eigen::Vector3i color)
+: color{color}
 {
   desc = descriptor;
   pos = position;
@@ -32,8 +36,11 @@ size_t Map::add_keyframe(const KeyFrame & frame)
 }
 
 void Map::create_mappoints(
-  size_t k_id, const std::vector<Eigen::Vector3d> points,
-  const std::vector<cv::Mat> descriptions)
+  size_t k_id,
+  const std::vector<Eigen::Vector3d> points,
+  const std::vector<Eigen::Vector3i> colors,
+  const cv::Mat & descriptions,
+  const std::vector<size_t> orig_idx = std::vector<size_t>{})
 {
   auto & keyframe = keyframes.at(k_id);
 
@@ -49,11 +56,27 @@ void Map::create_mappoints(
 
   // add map points to list and point cloud
   for (size_t i = 0; i < points.size(); i++) {
-    MapPoint mp{descriptions.at(i), world_points.at(i), k_id};
-    keyframe.link_map_point(i, mappoints.size());
+    MapPoint mp{descriptions.row(i), world_points.at(i), k_id, colors[i]};
+
+    size_t idx = i;
+    if (orig_idx.size() > 0) {
+      idx = orig_idx[i];
+    }
+
+    keyframe.link_map_point(idx, mappoints.size());
     mappoints.push_back(mp);
   }
 }
 
+std::ostream & operator<<(std::ostream & os, const Map & map)
+{
+  for (const auto & map_point: map.mappoints) {
+    const auto pos = map_point.position();
+    const auto color = map_point.get_color();
+    os << pos(0) << ", " << pos(1) << ", " << pos(2) << ", " << color(2) << ", " << color(1) <<
+      ", " << color(0) << "\n";
+  }
+  return os;
+}
 
 }

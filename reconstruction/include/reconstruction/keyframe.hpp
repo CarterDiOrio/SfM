@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <opencv2/core.hpp>
+#include <opencv2/features2d.hpp>
 #include <Eigen/Dense>
 #include <optional>
 
@@ -21,7 +22,8 @@ public:
   /// @param descriptions The descriptions of each keypoint
   KeyFrame(
     PinholeModel K, Eigen::Matrix4d T_kw, std::vector<cv::KeyPoint> keypoints,
-    std::vector<cv::Mat> descriptions);
+    cv::Mat descriptions,
+    cv::Mat img);
 
   /// @brief Gets the 3x3 camera calibration matrix
   /// @return the camera calibration matrix
@@ -51,7 +53,7 @@ public:
   {
     return {
       keypoints[i],
-      descriptions[i]
+      descriptors.row(i)
     };
   }
 
@@ -60,8 +62,8 @@ public:
   /// @param matcher the matcher to use
   /// @return a vector of the matches
   std::vector<cv::DMatch> match(
-    const std::vector<cv::Mat> & query_descriptiors,
-    const cv::DescriptorMatcher & matcher) const;
+    const cv::Mat & query_descriptiors,
+    const std::shared_ptr<cv::DescriptorMatcher> matcher) const;
 
   /// @brief Links a map point to a key point in the frame
   /// @param kp_idx the key point index
@@ -72,6 +74,15 @@ public:
   /// @param keypoint_idx the keypoint index
   /// @return the map point id
   std::optional<size_t> corresponding_map_point(size_t keypoint_idx) const;
+
+  /// @brief Gets the keypoints from the keyframe
+  /// @return the vector of key points
+  inline const std::vector<cv::KeyPoint> & get_keypoints() const
+  {
+    return keypoints;
+  }
+
+  cv::Mat img;
 
 private:
   /// @brief The camera intrinsics matrix
@@ -85,7 +96,7 @@ private:
   std::vector<cv::KeyPoint> keypoints;
 
   /// @brief The descriptiors for each keypoint
-  std::vector<cv::Mat> descriptors;
+  cv::Mat descriptors;
 
   // These following two dictionaries form a bidirectional relationship
   // between the key points and the map points if the key point corresponds
