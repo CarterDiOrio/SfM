@@ -6,6 +6,9 @@
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 
+#include "reconstruction/mappoint.hpp"
+#include "reconstruction/keyframe.hpp"
+
 namespace sfm
 {
 Reconstruction::Reconstruction(PinholeModel model)
@@ -28,24 +31,22 @@ void Reconstruction::add_frame_ordered(const cv::Mat & frame, const cv::Mat & de
   const auto colors = extract_colors(frame, keypoints);
 
   //2. find matches to previous frame map points
-  const auto previous_keyframe = map.get_keyframe(previous_k_id);
-  const auto matches = previous_keyframe.match(descriptions, matcher);
-
+  const auto previous_shared = previous_keyframe.lock();
+  const auto matches = previous_shared->match(descriptions, matcher);
 
   // 2.1 for each match get the map points
-  std::vector<std::pair<size_t, size_t>> kp_mp_pairs;
+  std::vector<std::pair<size_t, std::shared_ptr<MapPoint>>> kp_mp_pairs;
   for (const auto & dmatch: matches) {
-    const auto mp_id = previous_keyframe.corresponding_map_point(dmatch.trainIdx);
-    if (mp_id.has_value()) {
-      kp_mp_pairs.emplace_back(static_cast<size_t>(dmatch.queryIdx), mp_id.value());
+    const auto mp = previous_shared->corresponding_map_point(dmatch.trainIdx);
+    if (mp.has_value()) {
+      kp_mp_pairs.emplace_back(static_cast<size_t>(dmatch.queryIdx), mp.value());
     }
   }
 
-
   cv::Mat mimg;
   cv::drawMatches(
-    frame, keypoints, previous_keyframe.img,
-    previous_keyframe.get_keypoints(), matches, mimg);
+    frame, keypoints, previous_shared->img,
+    previous_shared->get_keypoints(), matches, mimg);
   cv::imshow("matches", mimg);
 
   // 3. Compute PnP from map points to 2D locations in current frame
@@ -53,54 +54,38 @@ void Reconstruction::add_frame_ordered(const cv::Mat & frame, const cv::Mat & de
   std::vector<Eigen::Vector3d> world_points;
   for (const auto & pair: kp_mp_pairs) {
     image_points.push_back(keypoints[pair.first].pt);
-    world_points.push_back(map.get_mappoint(pair.second).position());
+    world_points.push_back(pair.second->position());
   }
 
   auto transformation = pnp(image_points, world_points);
   std::cout << transformation << std::endl;
 
   //4. create key frame
-  KeyFrame current{
+  const auto current = map.create_keyframe(
     model,
     transformation,
     keypoints,
     descriptions,
-    frame
-  };
+    frame,
+    depth
+  );
+  const auto shared_current = current.lock();
 
   //5. add matched map points to keyframe
   for (const auto & pair: kp_mp_pairs) {
-    current.link_map_point(pair.first, pair.second);
+    shared_current->link_map_point(pair.first, pair.second);
   }
-
-  auto current_k_id = map.add_keyframe(current);
 
   //6. add new map points
-  std::vector<Eigen::Vector3d> new_points;
-  cv::Mat new_descriptors;
-  std::vector<Eigen::Vector3i> new_colors;
-  std::vector<size_t> orig_idx;
-  const auto deprojected = deproject_keypoints(keypoints, depth, model);
-  for (size_t i = 0; i < keypoints.size(); i++) {
-    auto it = std::find_if(
-      kp_mp_pairs.begin(), kp_mp_pairs.end(), [&i](const auto & pair) {
-        return pair.first == i;
-      });
-
-    // check if it does not already corresponds to a map point
-    if (it == kp_mp_pairs.end()) {
-      new_points.push_back(deprojected[i]);
-      new_descriptors.push_back(descriptions.row(i));
-      new_colors.push_back(colors[i]);
-      orig_idx.push_back(i);
-    }
+  const auto new_map_points = shared_current->create_map_points();
+  for (const auto & [idx, map_point]: new_map_points) {
+    map.add_map_point(map_point);
+    shared_current->link_map_point(idx, map_point);
   }
-
-  map.create_mappoints(current_k_id, new_points, new_colors, new_descriptors, orig_idx);
 
   std::cout << "MAP SIZE: " << map.size() << std::endl;
 
-  previous_k_id = current_k_id;
+  previous_keyframe = current;
 }
 
 void Reconstruction::initialize_reconstruction(const cv::Mat & frame, const cv::Mat & depth)
@@ -112,25 +97,26 @@ void Reconstruction::initialize_reconstruction(const cv::Mat & frame, const cv::
   const auto points = deproject_keypoints(keypoints, depth, model);
 
   // 3. Create map points
-  const KeyFrame initial{
+  const auto initial = map.create_keyframe(
     model,
     Eigen::Matrix4d::Identity(),
     keypoints,
     descriptions,
-    frame
-  };
+    frame,
+    depth
+  );
 
-  // 4. insert keyframe into map
-  auto k_id = map.add_keyframe(initial);
+  // 5. create and link new map points
+  const auto shared_keyframe = initial.lock();
+  const auto new_map_points = shared_keyframe->create_map_points();
+  for (const auto & [idx, map_point]: new_map_points) {
+    map.add_map_point(map_point);
+    shared_keyframe->link_map_point(idx, map_point);
+  }
 
-  // 5. create map points
-  const auto colors = extract_colors(frame, keypoints);
+  previous_keyframe = initial;
 
-  map.create_mappoints(k_id, points, colors, descriptions, std::vector<size_t>{});
-
-  previous_k_id = k_id;
-
-  std::cout << "MAP SIZE: " << map.size() << std::endl;
+  std::cout << "INITIAL MAP SIZE: " << map.size() << std::endl;
 }
 
 Eigen::Matrix4d Reconstruction::pnp(

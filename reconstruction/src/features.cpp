@@ -48,4 +48,10 @@ std::vector<Eigen::Vector3i> extract_colors(
   return colors;
 }
 
+Eigen::Vector3i extract_color(const cv::Mat & frame, const cv::Point2d & point)
+{
+  const auto color_vec = frame.at<cv::Vec3b>(point);
+  return {(int)color_vec[0], (int)color_vec[1], (int)color_vec[2]};
+}
+
 }

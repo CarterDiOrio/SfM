@@ -31,6 +31,11 @@ std::vector<Eigen::Vector3i> extract_colors(
   const std::vector<cv::KeyPoint> & keypoints
 );
 
+/// @brief Extracts the color for a given point
+/// @param frame the color frame
+/// @param point the point to extract the color at
+/// @return an eigen 3x1 vector representing the color
+Eigen::Vector3i extract_color(const cv::Mat & frame, const cv::Point2d & point);
 }
 
 

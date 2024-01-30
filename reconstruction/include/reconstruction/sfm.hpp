@@ -7,6 +7,7 @@
 #include "reconstruction/pinhole.hpp"
 #include "reconstruction/map.hpp"
 #include "reconstruction/features.hpp"
+#include "reconstruction/keyframe.hpp"
 
 namespace sfm
 {
@@ -36,7 +37,7 @@ private:
   const std::shared_ptr<cv::ORB> detector;
   const PinholeModel model;
 
-  size_t previous_k_id = -1;
+  std::weak_ptr<KeyFrame> previous_keyframe;
 
   Map map;
 

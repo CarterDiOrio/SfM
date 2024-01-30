@@ -12,61 +12,6 @@
 
 namespace sfm
 {
-/// @brief Models a 3D point in the map
-class MapPoint
-{
-public:
-  MapPoint(
-    cv::Mat, Eigen::Vector3d position, size_t keyframe_id,
-    Eigen::Vector3i color = {0, 0, 0});
-
-  /// @brief Gets the position of the map point in the world frame
-  /// @return the position of the map point in world frame
-  inline Eigen::Vector3d position() const
-  {
-    return pos;
-  }
-
-  /// @brief Gets the ORB binary description of the map point
-  /// @return The ORB binary description of the map point
-  inline cv::Mat description() const
-  {
-    return desc;
-  }
-
-  /// @brief Gets the color of the map point
-  /// @return the color
-  inline Eigen::Vector3i get_color() const
-  {
-    return color;
-  }
-
-  /// @brief Adds another keyframe where this point is visible from
-  /// @param k_id the id of the keyframe
-  void add_keyframe(size_t k_id);
-
-private:
-  /// @brief The orb descriptor that best matches the
-  cv::Mat desc;
-
-  /// @brief The 3D position of the point in world space
-  Eigen::Vector3d pos;
-
-  /// @brief The RGB color of the world point
-  Eigen::Vector3i color;
-
-  /// @brief The ids of the keyframes this point is visible in
-  std::vector<size_t> keyframe_ids;
-
-  /// @brief the minimum distance the point can be observed at according to
-  /// orb scale and invariant constraints
-  double min{0.0};
-
-  /// @brief The maximum distance the point can be observed at according
-  /// to orb scale and invariant constraints
-  double max{10.0};
-};
-
 /// @brief A map of keyframes and map points
 class Map
 {
@@ -80,23 +25,28 @@ public:
   /// @brief Adds a KeyFrame and returns the id of the keyframe
   /// @param frame the key frame to add
   /// @return the id of the added key frame
-  size_t add_keyframe(const KeyFrame & frame);
+  size_t add_keyframe(std::shared_ptr<KeyFrame> keyframe);
 
-  /// @brief Adds map points to the map
-  /// @param k_id the initial keyframe id to associate the map points with
-  /// @param points the 3D locations of the points in the key frame's frame.
-  /// @param descriptions the ORB descriptors of the map points
-  void create_mappoints(
-    size_t k_id,
-    const std::vector<Eigen::Vector3d> points,
-    const std::vector<Eigen::Vector3i> colors,
-    const cv::Mat & descriptions,
-    const std::vector<size_t> orig_idx);
+  /// @brief Creates a keyframe and returns a weak ptr to it.
+  /// @param K the amera model
+  /// @param T_wk the transformation from the camera frame to the world
+  /// @param keypoints the keypoints in the frame
+  /// @param descriptions the orb descriptors for the keypoints
+  /// @param img the image
+  /// @param depth the depth image
+  /// @return A weak ptr to the key frame.
+  std::weak_ptr<KeyFrame> create_keyframe(
+    PinholeModel K,
+    Eigen::Matrix4d T_kw,
+    std::vector<cv::KeyPoint> keypoints,
+    cv::Mat descriptions,
+    cv::Mat img,
+    cv::Mat depth);
 
   /// @brief Gets a keyframe with the given keyframe id
   /// @param k_id the id of the keyframe
   /// @return The keyframe
-  inline KeyFrame & get_keyframe(size_t k_id)
+  inline std::weak_ptr<KeyFrame> get_keyframe(size_t k_id)
   {
     return keyframes.at(k_id);
   }
@@ -104,10 +54,14 @@ public:
   /// @brief Gets the map point with the given id
   /// @param m_id the id of the map point
   /// @return the map point
-  inline MapPoint & get_mappoint(size_t m_id)
+  inline std::weak_ptr<MapPoint> get_mappoint(size_t m_id)
   {
     return mappoints.at(m_id);
   }
+
+  /// @brief Adds a map point to the map
+  /// @param map_point a shared pointer to the map point
+  void add_map_point(std::shared_ptr<MapPoint> map_point);
 
   friend std::ostream & operator<<(std::ostream & os, const Map & map);
 
@@ -118,10 +72,10 @@ public:
 
 private:
   /// @brief all the key frames in the map
-  std::vector<KeyFrame> keyframes;
+  std::vector<std::shared_ptr<KeyFrame>> keyframes;
 
   /// @brief all the map points in the map
-  std::vector<MapPoint> mappoints;
+  std::vector<std::shared_ptr<MapPoint>> mappoints;
 };
 
 

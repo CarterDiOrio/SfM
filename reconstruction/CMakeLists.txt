@@ -28,6 +28,7 @@ add_executable(reconstruct
                 src/reconstruct.cpp 
                 src/features.cpp 
                 src/map.cpp
+                src/mappoint.cpp
                 src/keyframe.cpp
                 src/recording.cpp
                 src/pinhole.cpp
