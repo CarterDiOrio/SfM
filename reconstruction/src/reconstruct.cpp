@@ -18,11 +18,11 @@ int main()
 
   sfm::utils::RecordingReader reader{"../recording"};
 
-  sfm::Reconstruction reconstruction{model};
-
-  // for (size_t i = 0; i < 5; i++) {
-  //   auto f = reader.read_frames();
-  // }
+  sfm::ReconstructionOptions options{
+    model,
+    6000.0
+  };
+  sfm::Reconstruction reconstruction{options};
 
   for (size_t i = 0; i < 280; i++) {
     auto f1 = reader.read_frames();
@@ -34,35 +34,9 @@ int main()
     }
   }
 
-  // auto f1 = reader.read_frames();
-  // const auto & [c, d] = f1.value();
-  // reconstruction.add_frame_ordered(c, d);
-
-  // for (int i = 0; i < 100; i++) {
-  //   reconstruction.add_frame_ordered(c, d);
-
-  // }
-
-  // std::cout << reconstruction.get_map();
-
   std::ofstream file;
   file.open("./cloud_2.txt");
   file << reconstruction.get_map();
-
-  // while (true) {
-  //   auto frames = reader.read_frames();
-  //   if (!frames.has_value()) {
-  //     std::cout << "no more frames" << "\n";
-  //     break;
-  //   }
-
-  //   const auto & [color_image, depth_image] = frames.value();
-
-  //   cv::imshow("color", color_image);
-  //   cv::imshow("depth", depth_image);
-
-  //   cv::waitKey(33);
-  // }
 
   return 0;
 }

@@ -1,20 +1,26 @@
 #include "reconstruction/sfm.hpp"
 
+#include <Eigen/src/Core/Matrix.h>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/eigen.hpp>
+#include <opencv2/core/types.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
 
 #include "reconstruction/mappoint.hpp"
 #include "reconstruction/keyframe.hpp"
+#include "reconstruction/features.hpp"
+
+#include <vector>
 
 namespace sfm
 {
-Reconstruction::Reconstruction(PinholeModel model)
+Reconstruction::Reconstruction(ReconstructionOptions options)
 : matcher{cv::BFMatcher::create(cv::NORM_HAMMING)},
   detector{cv::ORB::create(10000)},
-  model{model}
+  model{options.model},
+  options{options}
 {}
 
 void Reconstruction::add_frame_ordered(const cv::Mat & frame, const cv::Mat & depth)
@@ -24,15 +30,55 @@ void Reconstruction::add_frame_ordered(const cv::Mat & frame, const cv::Mat & de
     initialize_reconstruction(frame, depth);
     return;
   }
+  track_previous_frame(frame, depth);
+  std::cout << "MAP SIZE: " << map.size() << std::endl;
+}
 
-  // create keyframe process:
+void Reconstruction::initialize_reconstruction(const cv::Mat & frame, const cv::Mat & depth)
+{
+  // 1. Detect feautres in image
+  const auto features = detect_features(frame, detector);
+  const auto [keypoints, descriptors] = filter_features(features, depth, options.max_depth);
+
+  // 2. project points to 3d
+  auto points = deproject_keypoints(keypoints, depth, model);
+
+  // 3. Create map points
+  const auto initial = map.create_keyframe(
+    model,
+    Eigen::Matrix4d::Identity(),
+    keypoints,
+    descriptors,
+    frame,
+    depth
+  );
+
+  // 5. create and link new map points
+  const auto shared_keyframe = initial.lock();
+  const auto new_map_points = shared_keyframe->create_map_points();
+  for (const auto & [idx, map_point]: new_map_points) {
+    map.add_map_point(map_point);
+    shared_keyframe->link_map_point(idx, map_point);
+  }
+
+  previous_keyframe = initial;
+
+  std::cout << "INITIAL MAP SIZE: " << map.size() << std::endl;
+}
+
+void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat & depth)
+{
   // 1. get orb features in frame
-  const auto & [keypoints, descriptions] = detect_features(frame, detector);
+  const auto features = detect_features(frame, detector);
+  std::cout << "SIZE BEFORE FILTER: " << features.keypoints.size() << "\n";
+  const auto [keypoints, descriptors] = filter_features(features, depth, options.max_depth);
+  std::cout << "SIZE AFTER FILTER: " << keypoints.size() << "\n";
+
   const auto colors = extract_colors(frame, keypoints);
 
   //2. find matches to previous frame map points
   const auto previous_shared = previous_keyframe.lock();
-  const auto matches = previous_shared->match(descriptions, matcher);
+  const auto matches = previous_shared->match(descriptors, matcher);
 
   // 2.1 for each match get the map points
   std::vector<std::pair<size_t, std::shared_ptr<MapPoint>>> kp_mp_pairs;
@@ -65,7 +111,7 @@ void Reconstruction::add_frame_ordered(const cv::Mat & frame, const cv::Mat & de
     model,
     transformation,
     keypoints,
-    descriptions,
+    descriptors,
     frame,
     depth
   );
@@ -83,40 +129,7 @@ void Reconstruction::add_frame_ordered(const cv::Mat & frame, const cv::Mat & de
     shared_current->link_map_point(idx, map_point);
   }
 
-  std::cout << "MAP SIZE: " << map.size() << std::endl;
-
   previous_keyframe = current;
-}
-
-void Reconstruction::initialize_reconstruction(const cv::Mat & frame, const cv::Mat & depth)
-{
-  // 1. Detect feautres in image
-  const auto & [keypoints, descriptions] = detect_features(frame, detector);
-
-  // 2. project points to 3d
-  const auto points = deproject_keypoints(keypoints, depth, model);
-
-  // 3. Create map points
-  const auto initial = map.create_keyframe(
-    model,
-    Eigen::Matrix4d::Identity(),
-    keypoints,
-    descriptions,
-    frame,
-    depth
-  );
-
-  // 5. create and link new map points
-  const auto shared_keyframe = initial.lock();
-  const auto new_map_points = shared_keyframe->create_map_points();
-  for (const auto & [idx, map_point]: new_map_points) {
-    map.add_map_point(map_point);
-    shared_keyframe->link_map_point(idx, map_point);
-  }
-
-  previous_keyframe = initial;
-
-  std::cout << "INITIAL MAP SIZE: " << map.size() << std::endl;
 }
 
 Eigen::Matrix4d Reconstruction::pnp(
@@ -136,22 +149,11 @@ Eigen::Matrix4d Reconstruction::pnp(
   std::vector<int> inliers;
 
   cv::Mat k = model_to_mat(model);
-  std::cout << "started pnp " << image_points.size() << " " << world_points.size() << std::endl;
   cv::solvePnPRansac(
     world_points_cv, image_points, k,
     cv::noArray(), rvec, tvec, false, 2000, 8.0, 0.99, inliers, cv::SOLVEPNP_SQPNP);
 
-  int ni = std::count_if(
-    inliers.begin(), inliers.end(),
-    [](const int & i) {
-      return i > 0;
-    }
-  );
-
-
-  std::cout << "finished pnp " << ni << std::endl;
-
-  // // convert screw to transformation matrix
+  // convert screw to transformation matrix
   cv::Mat rotation_mat;
   cv::Rodrigues(rvec, rotation_mat);
 
@@ -160,6 +162,7 @@ Eigen::Matrix4d Reconstruction::pnp(
   Eigen::Vector3d translation_eig{tvec.at<double>(0, 0), tvec.at<double>(1, 0),
     tvec.at<double>(2, 0)};
 
+  // the transformation is given from world to camera and we want camera to world
   Eigen::Matrix4d transformation;
   transformation.setIdentity();
   transformation.block<3, 3>(0, 0) = rotation_eig.transpose();

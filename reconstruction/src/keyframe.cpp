@@ -91,7 +91,6 @@ std::vector<std::pair<size_t, std::shared_ptr<MapPoint>>> KeyFrame::create_map_p
       const auto point3d = deproject_pixel_to_point(K, pt.x, pt.y, depth);
       const auto world_point = (T_kw * point3d.homogeneous()).head<3>();
 
-
       //2. get color
       const auto color = extract_color(img, pt);
 

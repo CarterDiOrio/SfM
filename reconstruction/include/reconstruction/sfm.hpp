@@ -6,18 +6,29 @@
 
 #include "reconstruction/pinhole.hpp"
 #include "reconstruction/map.hpp"
-#include "reconstruction/features.hpp"
 #include "reconstruction/keyframe.hpp"
 
 namespace sfm
 {
+
+/// @brief Options for the reconstruction
+struct ReconstructionOptions
+{
+  /// @brief The camera model
+  PinholeModel model;
+
+  /// @brief The maximum valid depth for a feature (in meters)
+  double max_depth;
+};
+
+
 /// @brief Class that handles incremental 3D reconstruction
 class Reconstruction
 {
 public:
   /// @brief Initializes a reconstruction
   /// @param model the camera model to use.
-  Reconstruction(PinholeModel model);
+  Reconstruction(ReconstructionOptions options);
 
   /// @brief Adds a sequential frame to the reconstruction. It is expected
   /// that the frame comes after the previously added frame
@@ -36,16 +47,21 @@ private:
   const std::shared_ptr<cv::BFMatcher> matcher;
   const std::shared_ptr<cv::ORB> detector;
   const PinholeModel model;
+  const ReconstructionOptions options;
 
   std::weak_ptr<KeyFrame> previous_keyframe;
 
   Map map;
 
-
   /// @brief Initializes the 3D reconstruction
   /// @param frame the frame to initialize the reconstruction with
   /// @param depth the corresponding depth image
   void initialize_reconstruction(const cv::Mat & frame, const cv::Mat & depth);
+
+  /// @brief Tracks the features from the previous keyframe and adds the keyframe
+  /// @param frame the current frame
+  /// @param depth the current depth image
+  void track_previous_frame(const cv::Mat & frame, const cv::Mat & depth);
 
   /// @brief Performs Perspective-n-Point between the image points and the world points
   /// @param image_points the 2D points in the image

@@ -2,6 +2,9 @@
 # set the minimum required version of cmake, usually the first line
 cmake_minimum_required(VERSION 3.22)
 
+set(CMAKE_C_COMPILER "/usr/bin/clang-17")
+set(CMAKE_CXX_COMPILER "/usr/bin/clang++-17")
+
 # project_name sets the name of the project and causes cmake to
 # find the c and c++ compilers
 project(reconstruction)
@@ -23,7 +26,6 @@ add_definitions(${PCL_DEFINITIONS})
 
 # Create an executable from the following source code files
 # The Name of the executable creates a cmake "target"
-add_executable(essential src/essential.cpp)
 add_executable(reconstruct 
                 src/reconstruct.cpp 
                 src/features.cpp 
@@ -36,7 +38,7 @@ add_executable(reconstruct
 
 # Enable c++17 support.
 # Public causes the features to propagate to anything
-target_compile_features(essential PUBLIC cxx_std_17)
+target_compile_features(reconstruct PUBLIC cxx_std_23)
 
 
 # Use target_link_libraries to add dependencies to a "target"
@@ -44,7 +46,6 @@ target_compile_features(essential PUBLIC cxx_std_17)
 # This will automatically add all required library files
 # that need to be linked
 # and paths to th locations of header files
-target_link_libraries(essential Eigen3::Eigen ${OpenCV_LIBS})
 target_link_libraries(reconstruct Eigen3::Eigen ${OpenCV_LIBS} ${PCL_LIBRARIES})
 
 target_include_directories(reconstruct

@@ -1,10 +1,12 @@
 #include "reconstruction/features.hpp"
+#include <opencv2/core/hal/interface.h>
 #include <opencv2/features2d.hpp>
+#include <ranges>
 
 namespace sfm
 {
 
-std::pair<std::vector<cv::KeyPoint>, cv::Mat> detect_features(
+Features detect_features(
   const cv::Mat & img, std::shared_ptr<cv::ORB> feature_detector
 )
 {
@@ -30,6 +32,29 @@ std::vector<Eigen::Vector3d> deproject_keypoints(
     }
   );
   return points;
+}
+
+Features filter_features(
+  const Features & features,
+  const cv::Mat & depth_img,
+  double max_depth)
+{
+  const auto & [keypoints, descriptors] = features;
+  std::vector<cv::KeyPoint> filtered_keypoints;
+  cv::Mat filtered_descriptors;
+
+  for (const auto [idx, kp]: std::views::enumerate(keypoints)) {
+    auto depth = depth_img.at<uint16_t>(kp.pt);
+    if (depth < max_depth) {
+      filtered_keypoints.push_back(keypoints[idx]);
+      filtered_descriptors.push_back(descriptors.row(idx));
+    }
+  }
+
+  return {
+    .keypoints = filtered_keypoints,
+    .descriptors = filtered_descriptors,
+  };
 }
 
 std::vector<Eigen::Vector3i> extract_colors(
