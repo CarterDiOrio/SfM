@@ -1,6 +1,9 @@
 #include "reconstruction/mappoint.hpp"
 #include "reconstruction/keyframe.hpp"
 
+#include <memory>
+#include <ranges>
+
 namespace sfm
 {
 MapPoint::MapPoint(
@@ -33,5 +36,15 @@ cv::Mat MapPoint::description() const
 Eigen::Vector3i MapPoint::get_color() const
 {
   return color;
+}
+
+MapPoint::key_frames_t::iterator MapPoint::begin()
+{
+  return keyframes.begin();
+}
+
+MapPoint::key_frames_t::iterator MapPoint::end()
+{
+  return keyframes.end();
 }
 }

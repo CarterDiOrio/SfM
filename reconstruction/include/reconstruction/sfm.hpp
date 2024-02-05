@@ -1,6 +1,7 @@
 #ifndef INC_GUARD_SFM_HPP
 #define INC_GUARD_SFM_HPP
 
+#include <memory>
 #include <opencv2/core.hpp>
 #include <opencv2/features2d.hpp>
 
@@ -62,6 +63,10 @@ private:
   /// @param frame the current frame
   /// @param depth the current depth image
   void track_previous_frame(const cv::Mat & frame, const cv::Mat & depth);
+
+  /// @brief tracks and establishes a key frames link to its local map
+  /// @param key_frame the key frame
+  void track_local_map(std::shared_ptr<KeyFrame> key_frame);
 
   /// @brief Performs Perspective-n-Point between the image points and the world points
   /// @param image_points the 2D points in the image

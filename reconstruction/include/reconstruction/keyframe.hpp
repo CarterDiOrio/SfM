@@ -8,6 +8,7 @@
 #include <Eigen/Dense>
 #include <optional>
 #include <memory>
+#include <span>
 
 #include "reconstruction/pinhole.hpp"
 #include "reconstruction/keyframe.fwd.hpp"
@@ -23,12 +24,12 @@ class KeyFrame : public std::enable_shared_from_this<KeyFrame>
 public:
   /// @brief Instantiates a KeyFrame object
   /// @param K The camera calibration matrix
-  /// @param T_kw The transform from the world frame to the camera frame
+  /// @param T_wk The transform from the world frame to the camera frame
   /// @param keypoints The observed keypoints in the image
   /// @param descriptions The descriptions of each keypoint
   KeyFrame(
     PinholeModel K,
-    Eigen::Matrix4d T_kw,
+    Eigen::Matrix4d T_wk,
     std::vector<cv::KeyPoint> keypoints,
     cv::Mat descriptions,
     cv::Mat img,
@@ -38,9 +39,13 @@ public:
   /// @return the camera calibration matrix
   PinholeModel camera_calibration() const;
 
-  /// @brief Gets the transform from the world to the camera
-  /// @return The transform from the world to the camera
+  /// @brief Gets the transform from the cmaera to the world
+  /// @return The transform from the camera to the world
   Eigen::Matrix4d transform() const;
+
+  /// @brief Gets the transformation from the world to the camera frame
+  /// @return the transformation
+  Eigen::Matrix4d world_to_camera() const;
 
   /// @brief Gets the number of keypoints in the keyframe
   /// @return The number of keypoints
@@ -49,7 +54,7 @@ public:
   /// @brief Gets the keypoint and description
   /// @param i the id/idx of the keypoint
   /// @return a pair of {keypoint, description}
-  std::pair<cv::KeyPoint, cv::Mat> operator[](int i) const;
+  std::pair<cv::KeyPoint, cv::Mat> get_point(int i) const;
 
   /// @brief Matches keypoints with the other descriptions and returns the matches
   /// @param query_descriptiors the keypoint descriptions
@@ -77,14 +82,27 @@ public:
   /// @returns a vector of pairs of {corresponding keypoint idx, shared ptr to map point}
   std::vector<std::pair<size_t, std::shared_ptr<MapPoint>>> create_map_points();
 
+  /// @brief gets the map points linked to the key frame
+  /// @returns a vector of map points
+  std::vector<std::shared_ptr<MapPoint>> get_map_points() const;
+
+  /// @brief gets the indicies of the unmatched features within the radius of a point
+  /// @param x the x location of the point
+  /// @param y the y location of the point
+  /// @param r the radius around the point
+  /// @return the indicies of the features within the radius
+  std::vector<size_t> get_features_within_radius(double x, double y, double r);
+
   const cv::Mat img;
 
 private:
   /// @brief The camera intrinsics matrix
   const PinholeModel K;
 
-  /// @brief The homogenous transformation matrix from the world to the camera
-  /// frame.
+  /// @brief The homogenous transformation matrix from the camera to the world
+  Eigen::Matrix4d T_wk;
+
+  /// @brief the homogenous transformation matrix from the world to the camera.
   Eigen::Matrix4d T_kw;
 
   /// @brief The features keypoints in the image
@@ -106,6 +124,12 @@ private:
   /// @brief map point id to key point idx
   std::unordered_map<std::shared_ptr<MapPoint>, size_t> mp_to_kp_index;
 };
+
+/// @brief projects the map point into the image frame of the key frame
+/// @param key_frame the key frame to project onto
+/// @param map_point the map point to project
+/// @return the 2D point in the image frame
+cv::Point2d project_map_point(const KeyFrame & key_frame, const MapPoint & map_point);
 }
 
 #endif

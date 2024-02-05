@@ -2,8 +2,8 @@
 #define INC_GUARD_FEATURES_HPP
 
 #include "keyframe.hpp"
-#include <Eigen/src/Core/Matrix.h>
 #include <opencv2/features2d.hpp>
+#include <Eigen/Dense>
 
 namespace sfm
 {

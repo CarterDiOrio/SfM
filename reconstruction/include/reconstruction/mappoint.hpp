@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "reconstruction/keyframe.fwd.hpp"
-#include "reconstruction/mappoint.fwd.hpp"
 
 namespace sfm
 {
@@ -37,6 +36,10 @@ public:
   /// @brief Adds another keyframe where this point is visible from
   /// @param k_id the id of the keyframe
   void add_keyframe(std::weak_ptr<KeyFrame> keyframe);
+
+  using key_frames_t = std::vector<std::weak_ptr<KeyFrame>>;
+  key_frames_t::iterator begin();
+  key_frames_t::iterator end();
 
 private:
   /// @brief The orb descriptor that best matches the

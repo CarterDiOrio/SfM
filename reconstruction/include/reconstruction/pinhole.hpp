@@ -4,6 +4,7 @@
 #include <opencv2/core.hpp>
 
 #include <Eigen/Dense>
+#include <opencv2/core/types.hpp>
 
 namespace sfm
 {
@@ -32,10 +33,21 @@ struct PinholeModel
 /// @return a 3x1 column vector of the 3D point
 Eigen::Vector3d deproject_pixel_to_point(const PinholeModel & model, int px, int py, double depth);
 
+/// @brief Projects a pixel to the image plane
+/// @param model the camera model
+/// @param transform the transform from the world to the camera frame
+/// @param world_point the point to project
+/// @return a point in the image plane
+cv::Point2d project_pixel_to_point(
+  const PinholeModel & model,
+  const Eigen::Matrix4d transform,
+  const Eigen::Vector3d & world_point);
+
 /// @brief Convers the PinholeModel to an opencv matrix
 /// @param model the camera model
 /// @return an opencv mat that is the 3x3 camera calibration matrix
 cv::Mat model_to_mat(const PinholeModel & model);
+
 
 }
 

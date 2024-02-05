@@ -1,7 +1,9 @@
 #include "reconstruction/sfm.hpp"
 
-#include <Eigen/src/Core/Matrix.h>
+#include <algorithm>
+#include <memory>
 #include <opencv2/calib3d.hpp>
+#include <opencv2/core/base.hpp>
 #include <opencv2/core/eigen.hpp>
 #include <opencv2/core/types.hpp>
 #include <opencv2/features2d.hpp>
@@ -11,14 +13,17 @@
 #include "reconstruction/mappoint.hpp"
 #include "reconstruction/keyframe.hpp"
 #include "reconstruction/features.hpp"
+#include "reconstruction/utils.hpp"
 
+#include <unordered_set>
 #include <vector>
+#include <ranges>
 
 namespace sfm
 {
 Reconstruction::Reconstruction(ReconstructionOptions options)
-: matcher{cv::BFMatcher::create(cv::NORM_HAMMING)},
-  detector{cv::ORB::create(10000)},
+: matcher{cv::BFMatcher::create(cv::NORM_HAMMING, true)},
+  detector{cv::ORB::create(2000)},
   model{options.model},
   options{options}
 {}
@@ -55,10 +60,9 @@ void Reconstruction::initialize_reconstruction(const cv::Mat & frame, const cv::
 
   // 5. create and link new map points
   const auto shared_keyframe = initial.lock();
-  const auto new_map_points = shared_keyframe->create_map_points();
-  for (const auto & [idx, map_point]: new_map_points) {
+  for (const auto & [idx, map_point]: shared_keyframe->create_map_points()) {
     map.add_map_point(map_point);
-    shared_keyframe->link_map_point(idx, map_point);
+    map.link_keyframe_to_map_point(shared_keyframe, idx, map_point);
   }
 
   previous_keyframe = initial;
@@ -119,17 +123,72 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
 
   //5. add matched map points to keyframe
   for (const auto & pair: kp_mp_pairs) {
-    shared_current->link_map_point(pair.first, pair.second);
+    map.link_keyframe_to_map_point(shared_current, pair.first, pair.second);
   }
+
+  std::cout << "N MATCHES: " << kp_mp_pairs.size() << " " <<
+    shared_current->get_map_points().size() << "\n";
+
+  track_local_map(shared_current);
 
   //6. add new map points
-  const auto new_map_points = shared_current->create_map_points();
-  for (const auto & [idx, map_point]: new_map_points) {
+  const auto mps = shared_current->create_map_points();
+  std::cout << "CREATING UNMATCHED: " << mps.size() << "\n";
+  for (const auto & [idx, map_point]: mps) {
     map.add_map_point(map_point);
-    shared_current->link_map_point(idx, map_point);
+    map.link_keyframe_to_map_point(shared_current, idx, map_point);
   }
 
+  std::cout << "total created: " << shared_current->get_map_points().size() << "\n";
+  std::cout << "\n";
+
   previous_keyframe = current;
+}
+
+void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
+{
+  const auto local_map = map.get_local_map(key_frame, 2);
+
+  // map points in current keyframe
+  auto current_map_points = key_frame->get_map_points();
+
+  // get all the map points in the local map
+  std::unordered_set<std::shared_ptr<MapPoint>> local_set;
+  for (const auto local_kf: std::views::join(local_map)) {
+    auto map_points = local_kf->get_map_points() |
+      std::views::filter(in_container(current_map_points, true));
+    local_set.insert(map_points.begin(), map_points.end());
+  }
+
+  // filter map points
+  int count = 0;
+  for (auto mp: local_set) {
+    auto projection = project_map_point(*key_frame, *mp);
+    if (projection.x >= 0 && projection.x <= 1280 && projection.y >= 0 && projection.y <= 720) {
+      const auto features = key_frame->get_features_within_radius(projection.x, projection.y, 5.0);
+      const auto mp_desc = mp->description();
+
+      if (features.size() > 0) {
+
+        // get the features with the minimum distance
+        double min_dist = cv::norm(mp_desc, key_frame->get_point(0).second, cv::NORM_HAMMING);
+        size_t min_idx = features[0];
+        for (size_t idx: features) {
+          double dist = cv::norm(mp_desc, key_frame->get_point(0).second, cv::NORM_HAMMING);
+          if (dist < min_dist) {
+            min_idx = idx;
+            min_dist = dist;
+          }
+        }
+
+        // link the matched point to the key frame
+        map.link_keyframe_to_map_point(key_frame, min_idx, mp);
+        count++;
+      }
+    }
+  }
+
+  std::cout << "ADDITIONAL MATCHES: " << count << " " << key_frame->get_map_points().size() << "\n";
 }
 
 Eigen::Matrix4d Reconstruction::pnp(
