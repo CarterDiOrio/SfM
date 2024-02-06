@@ -16,7 +16,7 @@ int main()
     (cv::Mat_<double>(3, 3) << 913.848, 0.0, 642.941, 0.0, 913.602, 371.196, 0.0, 0.0, 1.0);
   sfm::PinholeModel model{913.848, 913.602, 642.941, 371.196};
 
-  sfm::utils::RecordingReader reader{"../recording"};
+  sfm::utils::RecordingReader reader{"../long_record"};
 
   sfm::ReconstructionOptions options{
     model,
@@ -24,12 +24,12 @@ int main()
   };
   sfm::Reconstruction reconstruction{options};
 
-  for (size_t i = 0; i < 280; i++) {
+  for (size_t i = 0; i < 1200; i++) {
     auto f1 = reader.read_frames();
 
     const auto & [c, d] = f1.value();
     reconstruction.add_frame_ordered(c, d);
-    if (cv::waitKey(100) == 'q') {
+    if (cv::waitKey(1) == 'q') {
       break;
     }
   }

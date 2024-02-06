@@ -45,7 +45,7 @@ public:
   }
 
 private:
-  const std::shared_ptr<cv::BFMatcher> matcher;
+  const std::shared_ptr<cv::DescriptorMatcher> matcher;
   const std::shared_ptr<cv::ORB> detector;
   const PinholeModel model;
   const ReconstructionOptions options;
@@ -72,7 +72,7 @@ private:
   /// @param image_points the 2D points in the image
   /// @param world_points the corresponding 3D world peoints
   /// @return the 4x4 transformation matrix of the camera to the world
-  Eigen::Matrix4d pnp(
+  std::pair<Eigen::Matrix4d, std::vector<int>> pnp(
     const std::vector<cv::Point2d> & image_points,
     const std::vector<Eigen::Vector3d> & world_points);
 };

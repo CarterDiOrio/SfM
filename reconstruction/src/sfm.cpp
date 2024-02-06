@@ -1,6 +1,8 @@
 #include "reconstruction/sfm.hpp"
 
 #include <algorithm>
+#include <ctime>
+#include <iterator>
 #include <memory>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/base.hpp>
@@ -18,12 +20,13 @@
 #include <unordered_set>
 #include <vector>
 #include <ranges>
+#include <time.h>
 
 namespace sfm
 {
 Reconstruction::Reconstruction(ReconstructionOptions options)
 : matcher{cv::BFMatcher::create(cv::NORM_HAMMING, true)},
-  detector{cv::ORB::create(2000)},
+  detector{cv::ORB::create(10000)},
   model{options.model},
   options{options}
 {}
@@ -72,11 +75,11 @@ void Reconstruction::initialize_reconstruction(const cv::Mat & frame, const cv::
 
 void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat & depth)
 {
+  auto start = std::clock();
+
   // 1. get orb features in frame
   const auto features = detect_features(frame, detector);
-  std::cout << "SIZE BEFORE FILTER: " << features.keypoints.size() << "\n";
   const auto [keypoints, descriptors] = filter_features(features, depth, options.max_depth);
-  std::cout << "SIZE AFTER FILTER: " << keypoints.size() << "\n";
 
   const auto colors = extract_colors(frame, keypoints);
 
@@ -107,8 +110,19 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
     world_points.push_back(pair.second->position());
   }
 
-  auto transformation = pnp(image_points, world_points);
+  auto [transformation, inliers] = pnp(image_points, world_points);
+
+  // filter for pnp inliers
+  std::vector<std::pair<size_t, std::shared_ptr<MapPoint>>> filtered_kp_mp;
+  for (const auto [idx, inlier_val]: std::views::enumerate(inliers)) {
+    if (inlier_val > 0) {
+      filtered_kp_mp.push_back(kp_mp_pairs[idx]);
+    }
+  }
+
   std::cout << transformation << std::endl;
+  std::cout << "Before PNP Filter: " << kp_mp_pairs.size() << " After: " << filtered_kp_mp.size() <<
+    "\n";
 
   //4. create key frame
   const auto current = map.create_keyframe(
@@ -122,24 +136,25 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
   const auto shared_current = current.lock();
 
   //5. add matched map points to keyframe
-  for (const auto & pair: kp_mp_pairs) {
+  for (const auto & pair: filtered_kp_mp) { // only link the key points that were inliers in pnp
     map.link_keyframe_to_map_point(shared_current, pair.first, pair.second);
   }
 
-  std::cout << "N MATCHES: " << kp_mp_pairs.size() << " " <<
-    shared_current->get_map_points().size() << "\n";
+  auto end = std::clock();
+  std::cout << "tracking previous frame took: " << (end - start) / double{CLOCKS_PER_SEC} << "\n";
 
+  start = std::clock();
   track_local_map(shared_current);
+  end = std::clock();
+  std::cout << "tracking local map took: " << (end - start) / double{CLOCKS_PER_SEC} << "\n";
 
   //6. add new map points
   const auto mps = shared_current->create_map_points();
-  std::cout << "CREATING UNMATCHED: " << mps.size() << "\n";
   for (const auto & [idx, map_point]: mps) {
     map.add_map_point(map_point);
     map.link_keyframe_to_map_point(shared_current, idx, map_point);
   }
 
-  std::cout << "total created: " << shared_current->get_map_points().size() << "\n";
   std::cout << "\n";
 
   previous_keyframe = current;
@@ -151,21 +166,38 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
 
   // map points in current keyframe
   auto current_map_points = key_frame->get_map_points();
+  std::unordered_set<std::shared_ptr<MapPoint>> current_set{current_map_points.begin(),
+    current_map_points.end()};
+
+  const auto in_front_filter = [transform = key_frame->world_to_camera()](const auto mp) {
+      return (transform * mp->position().homogeneous()).z() > 0;
+    };
 
   // get all the map points in the local map
+  auto mps = local_map |
+    std::views::join |
+    std::views::transform([](auto & kf) {return kf->get_map_points();}) |
+    std::views::join |
+    std::views::filter(
+    [&current_set](auto & mp) {
+      return current_set.find(mp) == current_set.end();
+    }) |
+    std::views::filter(in_front_filter);
+
   std::unordered_set<std::shared_ptr<MapPoint>> local_set;
-  for (const auto local_kf: std::views::join(local_map)) {
-    auto map_points = local_kf->get_map_points() |
-      std::views::filter(in_container(current_map_points, true));
-    local_set.insert(map_points.begin(), map_points.end());
+  for (const auto mp: mps) {
+    local_set.insert(mp);
   }
+
+  std::cout << "LOCAL MAP SIZE: " << local_set.size() << "\n";
+
 
   // filter map points
   int count = 0;
   for (auto mp: local_set) {
     auto projection = project_map_point(*key_frame, *mp);
     if (projection.x >= 0 && projection.x <= 1280 && projection.y >= 0 && projection.y <= 720) {
-      const auto features = key_frame->get_features_within_radius(projection.x, projection.y, 5.0);
+      const auto features = key_frame->get_features_within_radius(projection.x, projection.y, 3.0);
       const auto mp_desc = mp->description();
 
       if (features.size() > 0) {
@@ -191,7 +223,7 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
   std::cout << "ADDITIONAL MATCHES: " << count << " " << key_frame->get_map_points().size() << "\n";
 }
 
-Eigen::Matrix4d Reconstruction::pnp(
+std::pair<Eigen::Matrix4d, std::vector<int>> Reconstruction::pnp(
   const std::vector<cv::Point2d> & image_points,
   const std::vector<Eigen::Vector3d> & world_points)
 {
@@ -205,8 +237,8 @@ Eigen::Matrix4d Reconstruction::pnp(
 
   cv::Mat tvec = cv::Mat::zeros(3, 1, CV_64F);
   cv::Mat rvec = cv::Mat::zeros(3, 1, CV_64F);
-  std::vector<int> inliers;
 
+  std::vector<int> inliers;
   cv::Mat k = model_to_mat(model);
   cv::solvePnPRansac(
     world_points_cv, image_points, k,
@@ -226,7 +258,7 @@ Eigen::Matrix4d Reconstruction::pnp(
   transformation.setIdentity();
   transformation.block<3, 3>(0, 0) = rotation_eig.transpose();
   transformation.block<3, 1>(0, 3) = -1 * rotation_eig.transpose() * translation_eig;
-  return transformation;
+  return {transformation, inliers};
 }
 
 
