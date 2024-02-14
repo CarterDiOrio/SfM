@@ -47,6 +47,9 @@ public:
   /// @return the transformation
   Eigen::Matrix4d world_to_camera() const;
 
+  /// @brief Sets the transformation from the world to the camera frame
+  void set_world_to_camera(const Eigen::Matrix4d tf);
+
   /// @brief Gets the number of keypoints in the keyframe
   /// @return The number of keypoints
   size_t num_keypoints() const;
@@ -73,6 +76,11 @@ public:
   /// @param keypoint_idx the keypoint index
   /// @return a shared pointer to the map point
   std::optional<std::shared_ptr<MapPoint>> corresponding_map_point(size_t keypoint_idx) const;
+
+  /// @brief gets the observed location of a map point in image coordinates
+  /// @param map_point the map point to get the observed location of
+  /// @return a double of {x, y} pixel locations
+  std::pair<double, double> get_observed_location(const std::shared_ptr<MapPoint> map_point) const;
 
   /// @brief Gets the keypoints from the keyframe
   /// @return the vector of key points

@@ -8,6 +8,7 @@
 
 #include "reconstruction/keyframe.hpp"
 #include "reconstruction/mappoint.fwd.hpp"
+#include "reconstruction/pinhole.hpp"
 #include <pcl/point_types.h>
 
 #include <iosfwd>
@@ -15,6 +16,8 @@
 
 namespace sfm
 {
+constexpr unsigned int covisibility_minimum = 15;
+
 using key_frame_set_t = std::vector<std::shared_ptr<KeyFrame>>;
 
 /// @brief A map of keyframes and map points. The role of this class
@@ -78,6 +81,10 @@ public:
     size_t key_point_idx,
     std::shared_ptr<MapPoint> map_point);
 
+  /// @brief Adds the key frame to the covisibility graph
+  /// @param key_frame the key frame to link
+  void update_covisibility(std::shared_ptr<KeyFrame> key_frame);
+
   /// @brief gets the local map around a key frame
   /// @param key_frame the key frame to get the map around
   /// @param distance how many levels of neighbors to include
@@ -86,6 +93,11 @@ public:
   std::vector<key_frame_set_t> get_local_map(
     std::shared_ptr<KeyFrame> key_frame,
     size_t distance);
+
+  /// @brief performs bundle adjustment on the local map around a keyframe
+  /// @param key_frame the key frame to perform bundle adjustment around
+  void local_bundle_adjustment(
+    std::shared_ptr<KeyFrame> key_frame, PinholeModel model);
 
   friend std::ostream & operator<<(std::ostream & os, const Map & map);
 

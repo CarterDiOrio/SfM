@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.22)
 
 set(CMAKE_C_COMPILER "/usr/bin/clang-17")
 set(CMAKE_CXX_COMPILER "/usr/bin/clang++-17")
+set(CMAKE_CXX_FLAGS "-O3")
 
 # project_name sets the name of the project and causes cmake to
 # find the c and c++ compilers
@@ -19,10 +20,13 @@ project(reconstruction)
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(OpenCV REQUIRED)
 find_package(PCL 1.3 REQUIRED)
+find_package(Ceres REQUIRED)
+find_package(DBoW2 REQUIRED)
 
 include_directories(${PCL_INCLUDE_DIRS})
 link_directories(${PCL_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})
+
 
 # Create an executable from the following source code files
 # The Name of the executable creates a cmake "target"
@@ -34,7 +38,8 @@ add_executable(reconstruct
                 src/keyframe.cpp
                 src/recording.cpp
                 src/pinhole.cpp
-                src/sfm.cpp)
+                src/sfm.cpp
+                src/bundle_adjust.cpp)
 
 # Enable c++17 support.
 # Public causes the features to propagate to anything
@@ -46,7 +51,7 @@ target_compile_features(reconstruct PUBLIC cxx_std_23)
 # This will automatically add all required library files
 # that need to be linked
 # and paths to th locations of header files
-target_link_libraries(reconstruct Eigen3::Eigen ${OpenCV_LIBS} ${PCL_LIBRARIES})
+target_link_libraries(reconstruct Eigen3::Eigen ${OpenCV_LIBS} ${PCL_LIBRARIES} Ceres::ceres)
 
 target_include_directories(reconstruct
     PUBLIC

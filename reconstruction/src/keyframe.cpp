@@ -3,6 +3,7 @@
 #include "reconstruction/mappoint.hpp"
 #include "reconstruction/keyframe.hpp"
 
+#include <cstdint>
 #include <opencv2/core/types.hpp>
 #include <opencv2/features2d.hpp>
 #include <ranges>
@@ -30,6 +31,12 @@ Eigen::Matrix4d KeyFrame::transform() const
 Eigen::Matrix4d KeyFrame::world_to_camera() const
 {
   return T_kw;
+}
+
+void KeyFrame::set_world_to_camera(const Eigen::Matrix4d tf)
+{
+  T_wk = tf.inverse();
+  T_kw = tf;
 }
 
 size_t KeyFrame::num_keypoints() const
@@ -91,7 +98,7 @@ std::vector<std::pair<size_t, std::shared_ptr<MapPoint>>> KeyFrame::create_map_p
       const auto & pt = keypoints[i].pt;
 
       //1. deproject the point
-      const uint16_t depth = depth_img.at<uint16_t>(pt);
+      const double depth = depth_img.at<uint16_t>(pt);
       const auto point3d = deproject_pixel_to_point(K, pt.x, pt.y, depth);
       const auto world_point = (T_wk * point3d.homogeneous()).head<3>();
 
@@ -137,10 +144,19 @@ std::vector<size_t> KeyFrame::get_features_within_radius(double x, double y, dou
   return indicies;
 }
 
+std::pair<double,
+  double> KeyFrame::get_observed_location(const std::shared_ptr<MapPoint> map_point) const
+{
+  const auto idx = mp_to_kp_index.at(map_point);
+  const auto & kp = keypoints[idx];
+  return {kp.pt.x, kp.pt.y};
+}
+
 cv::Point2d project_map_point(const KeyFrame & key_frame, const MapPoint & map_point)
 {
   return project_pixel_to_point(
     key_frame.camera_calibration(),
     key_frame.world_to_camera(), map_point.position());
 }
+
 }

@@ -26,7 +26,7 @@ namespace sfm
 {
 Reconstruction::Reconstruction(ReconstructionOptions options)
 : matcher{cv::BFMatcher::create(cv::NORM_HAMMING, true)},
-  detector{cv::ORB::create(10000)},
+  detector{cv::ORB::create(3000)},
   model{options.model},
   options{options}
 {}
@@ -39,7 +39,7 @@ void Reconstruction::add_frame_ordered(const cv::Mat & frame, const cv::Mat & de
     return;
   }
   track_previous_frame(frame, depth);
-  std::cout << "MAP SIZE: " << map.size() << std::endl;
+  // std::cout << "MAP SIZE: " << map.size() << std::endl;
 }
 
 void Reconstruction::initialize_reconstruction(const cv::Mat & frame, const cv::Mat & depth)
@@ -70,7 +70,7 @@ void Reconstruction::initialize_reconstruction(const cv::Mat & frame, const cv::
 
   previous_keyframe = initial;
 
-  std::cout << "INITIAL MAP SIZE: " << map.size() << std::endl;
+  // std::cout << "INITIAL MAP SIZE: " << map.size() << std::endl;
 }
 
 void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat & depth)
@@ -120,10 +120,6 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
     }
   }
 
-  std::cout << transformation << std::endl;
-  std::cout << "Before PNP Filter: " << kp_mp_pairs.size() << " After: " << filtered_kp_mp.size() <<
-    "\n";
-
   //4. create key frame
   const auto current = map.create_keyframe(
     model,
@@ -139,23 +135,17 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
   for (const auto & pair: filtered_kp_mp) { // only link the key points that were inliers in pnp
     map.link_keyframe_to_map_point(shared_current, pair.first, pair.second);
   }
+  map.update_covisibility(shared_current); // update the covisibility graph
 
-  auto end = std::clock();
-  std::cout << "tracking previous frame took: " << (end - start) / double{CLOCKS_PER_SEC} << "\n";
-
-  start = std::clock();
   track_local_map(shared_current);
-  end = std::clock();
-  std::cout << "tracking local map took: " << (end - start) / double{CLOCKS_PER_SEC} << "\n";
+  // map.local_bundle_adjustment(shared_current, model);
 
-  //6. add new map points
   const auto mps = shared_current->create_map_points();
   for (const auto & [idx, map_point]: mps) {
     map.add_map_point(map_point);
     map.link_keyframe_to_map_point(shared_current, idx, map_point);
   }
-
-  std::cout << "\n";
+  map.update_covisibility(shared_current);
 
   previous_keyframe = current;
 }
@@ -169,8 +159,11 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
   std::unordered_set<std::shared_ptr<MapPoint>> current_set{current_map_points.begin(),
     current_map_points.end()};
 
+  // filter for points in the view of the camera (in front and in frame)
   const auto in_front_filter = [transform = key_frame->world_to_camera()](const auto mp) {
-      return (transform * mp->position().homogeneous()).z() > 0;
+      const auto img_p = transform * mp->position().homogeneous();
+      return img_p.z() > 0 && img_p.x() >= 0 && img_p.x() <= 1280 && img_p.y() >= 0 &&
+             img_p.y() <= 720;
     };
 
   // get all the map points in the local map
@@ -189,38 +182,38 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
     local_set.insert(mp);
   }
 
-  std::cout << "LOCAL MAP SIZE: " << local_set.size() << "\n";
-
+  // std::cout << "LOCAL MAP SIZE: " << local_set.size() << "\n";
 
   // filter map points
   int count = 0;
   for (auto mp: local_set) {
     auto projection = project_map_point(*key_frame, *mp);
-    if (projection.x >= 0 && projection.x <= 1280 && projection.y >= 0 && projection.y <= 720) {
-      const auto features = key_frame->get_features_within_radius(projection.x, projection.y, 3.0);
+    const auto features = key_frame->get_features_within_radius(projection.x, projection.y, 3.0);
+
+    if (features.size() > 0) {
       const auto mp_desc = mp->description();
 
-      if (features.size() > 0) {
+      // get the features with the minimum distance
+      double min_dist = cv::norm(mp_desc, key_frame->get_point(0).second, cv::NORM_HAMMING);
+      size_t min_idx = features[0];
 
-        // get the features with the minimum distance
-        double min_dist = cv::norm(mp_desc, key_frame->get_point(0).second, cv::NORM_HAMMING);
-        size_t min_idx = features[0];
-        for (size_t idx: features) {
-          double dist = cv::norm(mp_desc, key_frame->get_point(0).second, cv::NORM_HAMMING);
-          if (dist < min_dist) {
-            min_idx = idx;
-            min_dist = dist;
-          }
+      for (size_t idx: features) {
+        double dist = cv::norm(mp_desc, key_frame->get_point(0).second, cv::NORM_HAMMING);
+        if (dist < min_dist) {
+          min_idx = idx;
+          min_dist = dist;
         }
-
-        // link the matched point to the key frame
-        map.link_keyframe_to_map_point(key_frame, min_idx, mp);
-        count++;
       }
+
+      // link the matched point to the key frame
+      map.link_keyframe_to_map_point(key_frame, min_idx, mp);
+      count++;
     }
   }
 
-  std::cout << "ADDITIONAL MATCHES: " << count << " " << key_frame->get_map_points().size() << "\n";
+  map.update_covisibility(key_frame);
+
+  // std::cout << "ADDITIONAL MATCHES: " << count << " " << key_frame->get_map_points().size() << "\n";
 }
 
 std::pair<Eigen::Matrix4d, std::vector<int>> Reconstruction::pnp(

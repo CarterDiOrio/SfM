@@ -61,6 +61,6 @@ while True:
 print(f"images in list {len(frs)}")
 img = 0
 for color, depth in frs:
-    cv2.imwrite(f"./omnid/color_{img}.png", color)
-    cv2.imwrite(f"./omnid/depth_{img}.png", depth)
+    cv2.imwrite(f"./recording/color_{img}.png", color)
+    cv2.imwrite(f"./recording/depth_{img}.png", depth)
     img += 1

@@ -45,7 +45,7 @@ Features filter_features(
 
   for (const auto [idx, kp]: std::views::enumerate(keypoints)) {
     auto depth = depth_img.at<uint16_t>(kp.pt);
-    if (depth < max_depth) {
+    if (depth < max_depth && depth > 0) {
       filtered_keypoints.push_back(keypoints[idx]);
       filtered_descriptors.push_back(descriptors.row(idx));
     }
