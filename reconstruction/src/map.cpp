@@ -7,7 +7,6 @@
 #include <ceres/problem.h>
 #include <ceres/types.h>
 #include <opencv2/core.hpp>
-#include <pcl/filters/frustum_culling.h>
 #include <memory>
 #include <iostream>
 #include <deque>

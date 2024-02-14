@@ -4,12 +4,10 @@
 #include <memory>
 #include <opencv2/features2d.hpp>
 #include <Eigen/Dense>
-#include <pcl/point_cloud.h>
 
 #include "reconstruction/keyframe.hpp"
 #include "reconstruction/mappoint.fwd.hpp"
 #include "reconstruction/pinhole.hpp"
-#include <pcl/point_types.h>
 
 #include <iosfwd>
 #include <unordered_map>

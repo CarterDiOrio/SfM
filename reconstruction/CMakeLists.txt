@@ -19,14 +19,33 @@ project(reconstruction)
 # https://eigen.tuxfamily.org/dox/TopicCMakeGuide.html
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(OpenCV REQUIRED)
-find_package(PCL 1.3 REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(DBoW2 REQUIRED)
+find_package(glfw3 REQUIRED)
 
-include_directories(${PCL_INCLUDE_DIRS})
-link_directories(${PCL_LIBRARY_DIRS})
-add_definitions(${PCL_DEFINITIONS})
+add_library(imgui
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imconfig.h
+    ${imgui_SOURCE_DIR}/imgui_demo.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_internal.h
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/imstb_rectpack.h
+    ${imgui_SOURCE_DIR}/imstb_textedit.h
+    ${imgui_SOURCE_DIR}/imstb_truetype.h
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.h
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.h
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_link_libraries(imgui PUBLIC glfw)
 
+add_library(glad
+    ${glad_SOURCE_DIR}/src/glad.c
+)
+target_include_directories(glad PUBLIC ${glad_SOURCE_DIR}/include)
 
 # Create an executable from the following source code files
 # The Name of the executable creates a cmake "target"
@@ -41,18 +60,22 @@ add_executable(reconstruct
                 src/sfm.cpp
                 src/bundle_adjust.cpp)
 
+add_executable(visualizer
+                src/visualizer.cpp)
+
+
 # Enable c++17 support.
 # Public causes the features to propagate to anything
 target_compile_features(reconstruct PUBLIC cxx_std_23)
-
+target_compile_features(visualizer PUBLIC cxx_std_23)
 
 # Use target_link_libraries to add dependencies to a "target"
 # (e.g., a library or executable)
 # This will automatically add all required library files
 # that need to be linked
 # and paths to th locations of header files
-target_link_libraries(reconstruct Eigen3::Eigen ${OpenCV_LIBS} ${PCL_LIBRARIES} Ceres::ceres)
-
+target_link_libraries(reconstruct Eigen3::Eigen ${OpenCV_LIBS} Ceres::ceres)
+target_link_libraries(visualizer imgui glad)
 target_include_directories(reconstruct
     PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>
