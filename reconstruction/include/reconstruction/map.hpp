@@ -99,6 +99,9 @@ public:
   std::vector<std::shared_ptr<KeyFrame>> get_neighbors(
     std::shared_ptr<KeyFrame> key_frame);
 
+  /// @brief removes a map point from the map
+  void remove_map_point(std::shared_ptr<MapPoint> map_point);
+
   /// @brief performs bundle adjustment on the local map around a keyframe
   /// @param key_frame the key frame to perform bundle adjustment around
   void local_bundle_adjustment(

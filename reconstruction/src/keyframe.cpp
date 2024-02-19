@@ -26,11 +26,6 @@ KeyFrame::KeyFrame(
   }
 
   deprojected_points = deproject_keypoints(keypoints, depth, model);
-  std::transform(
-    deprojected_points.begin(), deprojected_points.end(), deprojected_points.begin(),
-    [&T_wk](const Eigen::Vector3d & pt) {
-      return (T_wk * pt.homogeneous()).head<3>();
-    });
 }
 
 PinholeModel KeyFrame::camera_calibration() const
@@ -109,6 +104,7 @@ void KeyFrame::link_map_point(size_t kp_idx, std::shared_ptr<MapPoint> map_point
 
   if (mp_to_kp_index.find(map_point) != mp_to_kp_index.end()) {
     std::cout << "DUPLICATES MP\n";
+    return;
   }
 
   kp_to_mp_index[kp_idx] = map_point;
@@ -138,7 +134,8 @@ std::vector<std::pair<size_t, std::shared_ptr<MapPoint>>> KeyFrame::create_map_p
       //3. make map point
       std::shared_ptr<KeyFrame> wp = shared_from_this();
       auto map_point = std::make_shared<MapPoint>(
-        descriptors.row(i), deprojected_points[i],
+        descriptors.row(i),
+        (T_wk * deprojected_points[i].homogeneous()).head<3>(),
         wp, color);
 
       link_map_point(i, map_point);
@@ -167,12 +164,14 @@ std::optional<cv::Mat> KeyFrame::get_descriptor(std::shared_ptr<MapPoint> map_po
   return descriptors.row(mp_to_kp_index.at(map_point));
 }
 
-std::vector<size_t> KeyFrame::get_features_within_radius(double x, double y, double r)
+std::vector<size_t> KeyFrame::get_features_within_radius(
+  double x, double y, double r,
+  bool allow_matched)
 {
   const auto r2 = r * r;
   std::vector<size_t> indicies;
   for (size_t i = 0; i < keypoints.size(); i++) {
-    if (kp_to_mp_index.find(i) == kp_to_mp_index.end()) {
+    if (allow_matched || kp_to_mp_index.find(i) == kp_to_mp_index.end()) {
       const auto & kp = keypoints[i];
       const auto dx = kp.pt.x - x;
       const auto dy = kp.pt.y - y;
@@ -195,7 +194,14 @@ std::pair<double,
 Eigen::Vector3d KeyFrame::get_observed_location_3d(const std::shared_ptr<MapPoint> map_point) const
 {
   const auto idx = mp_to_kp_index.at(map_point);
-  return deprojected_points[idx];
+  return (T_wk * deprojected_points[idx].homogeneous()).head<3>();
+}
+
+void KeyFrame::remove_map_point(const std::shared_ptr<MapPoint> map_point)
+{
+  const auto idx = mp_to_kp_index.at(map_point);
+  kp_to_mp_index.erase(idx);
+  mp_to_kp_index.erase(map_point);
 }
 
 cv::Point2d project_map_point(const KeyFrame & key_frame, const MapPoint & map_point)

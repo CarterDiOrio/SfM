@@ -126,7 +126,13 @@ public:
   /// @param y the y location of the point
   /// @param r the radius around the point
   /// @return the indicies of the features within the radius
-  std::vector<size_t> get_features_within_radius(double x, double y, double r);
+  std::vector<size_t> get_features_within_radius(
+    double x, double y, double r,
+    bool allow_matched = false);
+
+  /// @brief Removes the map point from the key frame
+  /// @param map_point the map point to remove
+  void remove_map_point(const std::shared_ptr<MapPoint> map_point);
 
   const cv::Mat img;
 

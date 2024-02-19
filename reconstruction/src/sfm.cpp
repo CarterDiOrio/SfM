@@ -1,5 +1,6 @@
 #include "reconstruction/sfm.hpp"
 
+#include <Eigen/src/Core/Matrix.h>
 #include <algorithm>
 #include <ctime>
 #include <iterator>
@@ -123,9 +124,6 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
     }
   }
 
-  // std::cout << transformation.row(0) << ' ' << transformation.row(1) << ' ' <<
-  //   transformation.row(2) << std::endl;
-
   //4. create key frame
   const auto current = map.create_keyframe(
     model,
@@ -159,6 +157,11 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
 
   // attempt to loop close
   loop_closing(shared_current);
+
+  std::cout << shared_current->transform().row(0) << ' ' << shared_current->transform().row(1) <<
+    ' ' <<
+    shared_current->transform().row(2) << std::endl;
+
 
   previous_keyframe = current;
 }
@@ -197,7 +200,6 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
 
 
   // filter map points
-  int count = 0;
   for (auto mp: local_set) {
     auto projection = project_map_point(*key_frame, *mp);
     const auto features = key_frame->get_features_within_radius(projection.x, projection.y, 3.0);
@@ -219,7 +221,6 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
 
       // link the matched point to the key frame
       map.link_keyframe_to_map_point(key_frame, min_idx, mp);
-      count++;
     }
   }
 
@@ -267,8 +268,11 @@ std::pair<Eigen::Matrix4d, std::vector<int>> Reconstruction::pnp(
 void Reconstruction::loop_closing(std::shared_ptr<KeyFrame> key_frame)
 {
   const auto candidate_keyframes = loop_candidate_detection(key_frame);
-  const auto candidate_groups = loop_candidate_refinment(key_frame, candidate_keyframes);
-  loop_candidate_geometric(key_frame, candidate_groups);
+  auto candidate_groups = loop_candidate_refinment(key_frame, candidate_keyframes);
+  auto loop = loop_candidate_geometric(key_frame, candidate_groups);
+  if (loop.has_value()) {
+    loop_closure(key_frame, loop.value());
+  }
 }
 
 std::vector<std::shared_ptr<KeyFrame>> Reconstruction::loop_candidate_detection(
@@ -295,8 +299,6 @@ std::vector<std::shared_ptr<KeyFrame>> Reconstruction::loop_candidate_detection(
     [&neighbors, &key_frame](const auto & match) {
       return std::find(neighbors.begin(), neighbors.end(), match) == neighbors.end();
     });
-
-  // std::cout << "loop candidates: " << loop_candidates.size() << std::endl;
 
   return loop_candidates;
 }
@@ -368,7 +370,7 @@ std::vector<KeyFrameGroup> Reconstruction::loop_candidate_refinment(
   keyframe_groups.erase(
     std::remove_if(
       keyframe_groups.begin(), keyframe_groups.end(),
-      [](auto & group) {
+      [](const auto & group) {
         return group.expanded_count >= expansion_consistency_threshold;
       }
     ),
@@ -387,26 +389,26 @@ std::vector<KeyFrameGroup> Reconstruction::loop_candidate_refinment(
     }
   }
 
-  // std::cout << "met consistency: " << consistent_groups.size() << std::endl;
   return consistent_groups;
 }
 
-void Reconstruction::loop_candidate_geometric(
+std::optional<KeyFrameGroup> Reconstruction::loop_candidate_geometric(
   std::shared_ptr<KeyFrame> key_frame,
-  const std::vector<KeyFrameGroup> & groups)
+  std::vector<KeyFrameGroup> & groups)
 {
-  for (const auto & group: groups) {
+  for (auto & group: groups) {
     // get all the map points in the group
-    std::unordered_set<std::shared_ptr<MapPoint>> mp_set;
     for (const auto & kf: group.key_frames) {
       const auto mps = kf->get_map_points();
-      mp_set.insert(mps.begin(), mps.end());
+      group.map_points.insert(mps.begin(), mps.end());
     }
-    std::vector<std::shared_ptr<MapPoint>> mps{mp_set.begin(), mp_set.end()};
+
+    std::vector<std::shared_ptr<MapPoint>> map_points{group.map_points.begin(),
+      group.map_points.end()};
 
     // create a cv::Mat of the descriptors for all the map points
     cv::Mat descriptors;
-    for (const auto & mp: mps) {
+    for (const auto & mp: map_points) {
       descriptors.push_back(mp->description());
     }
     std::vector<cv::DMatch> matches;
@@ -417,7 +419,7 @@ void Reconstruction::loop_candidate_geometric(
     std::vector<Eigen::Vector3d> world_points;
     for (const auto & match: matches) {
       image_points.push_back(key_frame->get_keypoints()[match.queryIdx].pt);
-      world_points.push_back(mps[match.trainIdx]->position());
+      world_points.push_back(map_points[match.trainIdx]->position());
     }
 
     try {
@@ -429,14 +431,94 @@ void Reconstruction::loop_candidate_geometric(
         });
 
       if (count > 30) {
-        std::cout << "inliers: " << count << std::endl;
-        std::cout << transformation << std::endl;
+        // std::cout << "inliers: " << count << std::endl;
+        group.T_wk = transformation;
+        return group;
       }
 
     } catch (cv::Exception & e) {
-      std::cout << e.what() << std::endl;
+      // std::cout << e.what() << std::endl;
     }
   }
+
+  return {};
+}
+
+
+void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameGroup & group)
+{
+  std::cout << "LOOP CLOSURE!" << std::endl;
+  //get the transform between the key frame and each of its neighbors
+  auto loop_key_frames = map.get_neighbors(key_frame);
+  const Eigen::Matrix4d T_kw = group.T_wk.inverse();
+
+  // the loop closed transform propogated to each of the key frames neighbors
+  for (auto & neighbor: loop_key_frames) {
+    // We want T_kn_w = T_kn_k  * T_kw
+    // T_kn_k = T_kn_w * T_wk
+    Eigen::Matrix4d T_kn_k = neighbor->world_to_camera() * key_frame->transform();
+    Eigen::Matrix4d T_kn_w = T_kn_k * T_kw;
+    neighbor->set_world_to_camera(T_kn_w);
+  }
+  key_frame->set_world_to_camera(T_kw);
+  loop_key_frames.push_back(key_frame);
+
+  // project and match map points
+  for (const auto & loop_kf: loop_key_frames) {
+    const auto in_front_filter = [transform = loop_kf->world_to_camera()](const auto mp) {
+        const auto img_p = transform * mp->position().homogeneous();
+        return img_p.z() > 0 && img_p.x() >= 0 && img_p.x() <= 1280 && img_p.y() >= 0 &&
+               img_p.y() <= 720;
+      };
+
+    for (const auto & mp: group.map_points | std::views::filter(in_front_filter)) {
+      auto projection = project_map_point(*loop_kf, *mp);
+      const auto features = loop_kf->get_features_within_radius(
+        projection.x, projection.y, 3.0,
+        true);
+
+      if (features.size() > 0) {
+        const auto mp_desc = mp->description();
+
+        double min_dist = cv::norm(mp_desc, key_frame->get_point(0).second, cv::NORM_HAMMING);
+        size_t min_idx = features[0];
+
+        for (size_t idx: features) {
+          double dist = cv::norm(mp_desc, key_frame->get_point(0).second, cv::NORM_HAMMING);
+          if (dist < min_dist) {
+            min_idx = idx;
+            min_dist = dist;
+          }
+        }
+
+        const auto kf_mp = loop_kf->corresponding_map_point(min_idx);
+        if (kf_mp.has_value()) {
+          if (group.map_points.find(kf_mp.value()) != group.map_points.end()) {
+            // we do not want to remove map points from the group because
+            // they are the originals and we are currenlty processing them
+            // Just unlink the map point from the key frame
+            loop_kf->remove_map_point(kf_mp.value());
+            kf_mp.value()->remove_keyframe(loop_kf);
+          } else {
+            // map point is not in the group and matches in the group, needs
+            // to be merged. Remove and link.
+            map.remove_map_point(kf_mp.value());
+          }
+        }
+        map.link_keyframe_to_map_point(loop_kf, min_idx, mp);
+      }
+    }
+
+    // add edges in the covisibility graph
+    map.update_covisibility(loop_kf);
+  }
+
+  // optimize
+
+
+  std::cout << "LOOP CLOSURE DONE!" << std::endl;
+  // clear key frame groups
+  keyframe_groups.clear();
 }
 
 }

@@ -37,6 +37,16 @@ public:
   /// @param k_id the id of the keyframe
   void add_keyframe(std::weak_ptr<KeyFrame> keyframe);
 
+  /// @brief Removes a keyframe from the list of keyframes where this point is visible
+  /// @param k_id the id of the keyframe
+  void remove_keyframe(std::weak_ptr<KeyFrame> keyframe);
+
+  /// @brief updates the position to be the best observed position in the world
+  void update_position();
+
+  /// @brief Gets the keyframes where this point is visible
+  std::vector<std::weak_ptr<KeyFrame>> get_keyframes();
+
   using key_frames_t = std::vector<std::weak_ptr<KeyFrame>>;
   key_frames_t::iterator begin();
   key_frames_t::iterator end();

@@ -26,19 +26,24 @@ void PlaceRecognition::add(std::shared_ptr<KeyFrame> key_frame)
 }
 
 std::vector<std::shared_ptr<KeyFrame>> PlaceRecognition::query(
-  const KeyFrame & key_frame,
+  const KeyFrame & query_key_frame,
   size_t num_matches,
   Map & map,
   double threshold)
 {
   DBoW2::QueryResults QueryResults;
-  database.query(key_frame.get_descriptors(), QueryResults, num_matches);
+  database.query(query_key_frame.get_descriptors(), QueryResults, num_matches);
+  const auto query_kf = entry_key_frame_map.at(QueryResults[0].Id);
 
   // group matches by covisibility
   std::vector<QueryQroup> groups;
   for (const auto & result: QueryResults | std::views::drop(1)) {   // first element is always the query
     const auto key_frame = entry_key_frame_map.at(result.Id);
-    auto cov = map.get_neighbors(key_frame);
+    auto cov = map.get_neighbors(key_frame) | std::views::filter(
+      [&query_kf](const auto & kf) {
+        return query_kf != kf;
+      }
+    );
 
     bool in_group = false;
     for (auto & group: groups) {

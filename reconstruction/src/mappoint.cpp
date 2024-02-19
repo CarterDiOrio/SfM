@@ -31,6 +31,7 @@ void MapPoint::add_keyframe(std::weak_ptr<KeyFrame> keyframe)
   for (const auto & kf: keyframes) {
     auto shared_kf = kf.lock();
     auto descriptor = shared_kf->get_descriptor(shared_from_this());
+
     descriptors.push_back(descriptor.value());
     positions.push_back(shared_kf->get_observed_location_3d(shared_from_this()));
   }
@@ -47,6 +48,17 @@ void MapPoint::add_keyframe(std::weak_ptr<KeyFrame> keyframe)
 
   desc = descriptors[idx];
 
+  update_position();
+}
+
+void MapPoint::update_position()
+{
+  std::vector<Eigen::Vector3d> positions;
+  for (const auto & kf: keyframes) {
+    auto shared_kf = kf.lock();
+    positions.push_back(shared_kf->get_observed_location_3d(shared_from_this()));
+  }
+
   // find the 3D location with the lowest reprojection error
   std::vector<double> reprojection_errors;
   for (const auto & observed_pos: positions) {
@@ -59,11 +71,29 @@ void MapPoint::add_keyframe(std::weak_ptr<KeyFrame> keyframe)
     }
     reprojection_errors.push_back(err);
   }
-  idx = std::distance(
+
+  auto idx = std::distance(
     reprojection_errors.begin(),
     std::min_element(reprojection_errors.begin(), reprojection_errors.end()));
 
   pos = positions[idx];
+}
+
+void MapPoint::remove_keyframe(std::weak_ptr<KeyFrame> keyframe)
+{
+  keyframes.erase(
+    std::remove_if(
+      keyframes.begin(),
+      keyframes.end(),
+      [keyframe](const auto & kf) {
+        return kf.lock() == keyframe.lock();
+      }),
+    keyframes.end());
+}
+
+std::vector<std::weak_ptr<KeyFrame>> MapPoint::get_keyframes()
+{
+  return keyframes;
 }
 
 Eigen::Vector3d MapPoint::position() const

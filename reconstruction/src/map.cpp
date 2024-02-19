@@ -158,6 +158,17 @@ std::vector<std::shared_ptr<KeyFrame>> Map::get_neighbors(
   return covisibility[key_frame];
 }
 
+void Map::remove_map_point(std::shared_ptr<MapPoint> map_point)
+{
+  mappoints.erase(
+    std::remove(mappoints.begin(), mappoints.end(), map_point),
+    mappoints.end());
+  const auto keyframes = map_point->get_keyframes();
+  for (const auto kf: keyframes) {
+    kf.lock()->remove_map_point(map_point);
+  }
+}
+
 void Map::local_bundle_adjustment(std::shared_ptr<KeyFrame> key_frame, PinholeModel model)
 {
   // get the key frames connected to the current key frame directly

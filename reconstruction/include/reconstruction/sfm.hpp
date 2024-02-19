@@ -4,6 +4,8 @@
 #include <memory>
 #include <opencv2/core.hpp>
 #include <opencv2/features2d.hpp>
+#include <optional>
+#include <unordered_set>
 
 #include "reconstruction/pinhole.hpp"
 #include "reconstruction/map.hpp"
@@ -25,13 +27,19 @@ struct ReconstructionOptions
   std::string place_recognition_voc;
 };
 
-/// @brief Key Frame groups for loop closure consistency checking
+/// @brief Key Frame groups for loop closure
 struct KeyFrameGroup
 {
   /// @brief the key frames in the group
-  std::set<std::shared_ptr<KeyFrame>> key_frames;
+  std::unordered_set<std::shared_ptr<KeyFrame>> key_frames;
 
-  std::set<std::shared_ptr<KeyFrame>> covisibility;
+  std::unordered_set<std::shared_ptr<KeyFrame>> covisibility;
+
+  /// @brief the map points in the group
+  std::unordered_set<std::shared_ptr<MapPoint>> map_points;
+
+  /// @brief the transformation from the world to the keyframe
+  Eigen::Matrix4d T_wk;
 
   /// @brief whether or not the group was expanded
   bool expanded = false;
@@ -108,10 +116,14 @@ private:
     const std::vector<std::shared_ptr<KeyFrame>> & candidates);
 
   /// @brief performs feature matching and geometric consistency checking
-  void loop_candidate_geometric(
+  std::optional<KeyFrameGroup> loop_candidate_geometric(
     std::shared_ptr<KeyFrame> key_frame,
-    const std::vector<KeyFrameGroup> & groups);
+    std::vector<KeyFrameGroup> & groups);
 
+  /// @brief closes the loop and performs optimization
+  /// @param key_frame the key frame to close the loop with
+  /// @param group the group to close the loop with
+  void loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameGroup & group);
 
   /// @brief Performs Perspective-n-Point between the image points and the world points
   /// @param image_points the 2D points in the image
