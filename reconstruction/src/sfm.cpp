@@ -15,6 +15,7 @@
 #include "reconstruction/mappoint.hpp"
 #include "reconstruction/keyframe.hpp"
 #include "reconstruction/features.hpp"
+#include "reconstruction/place_recognition.hpp"
 #include "reconstruction/utils.hpp"
 
 #include <unordered_set>
@@ -26,9 +27,10 @@ namespace sfm
 {
 Reconstruction::Reconstruction(ReconstructionOptions options)
 : matcher{cv::BFMatcher::create(cv::NORM_HAMMING, true)},
-  detector{cv::ORB::create(3000)},
+  detector{cv::ORB::create(2000)},
   model{options.model},
-  options{options}
+  options{options},
+  place_recognition(options.place_recognition_voc)
 {}
 
 void Reconstruction::add_frame_ordered(const cv::Mat & frame, const cv::Mat & depth)
@@ -39,7 +41,6 @@ void Reconstruction::add_frame_ordered(const cv::Mat & frame, const cv::Mat & de
     return;
   }
   track_previous_frame(frame, depth);
-  // std::cout << "MAP SIZE: " << map.size() << std::endl;
 }
 
 void Reconstruction::initialize_reconstruction(const cv::Mat & frame, const cv::Mat & depth)
@@ -58,19 +59,21 @@ void Reconstruction::initialize_reconstruction(const cv::Mat & frame, const cv::
     keypoints,
     descriptors,
     frame,
-    depth
+    depth,
+    model
   );
 
   // 5. create and link new map points
   const auto shared_keyframe = initial.lock();
   for (const auto & [idx, map_point]: shared_keyframe->create_map_points()) {
     map.add_map_point(map_point);
-    map.link_keyframe_to_map_point(shared_keyframe, idx, map_point);
   }
 
-  previous_keyframe = initial;
+  // 6. set the bow vector for the place recognition
+  shared_keyframe->set_bow_vector(place_recognition.convert(shared_keyframe->get_descriptors()));
+  place_recognition.add(shared_keyframe);
 
-  // std::cout << "INITIAL MAP SIZE: " << map.size() << std::endl;
+  previous_keyframe = initial;
 }
 
 void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat & depth)
@@ -120,6 +123,9 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
     }
   }
 
+  // std::cout << transformation.row(0) << ' ' << transformation.row(1) << ' ' <<
+  //   transformation.row(2) << std::endl;
+
   //4. create key frame
   const auto current = map.create_keyframe(
     model,
@@ -127,9 +133,13 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
     keypoints,
     descriptors,
     frame,
-    depth
+    depth,
+    model
   );
   const auto shared_current = current.lock();
+
+  shared_current->set_bow_vector(place_recognition.convert(shared_current->get_descriptors()));
+  place_recognition.add(shared_current);
 
   //5. add matched map points to keyframe
   for (const auto & pair: filtered_kp_mp) { // only link the key points that were inliers in pnp
@@ -137,15 +147,18 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
   }
   map.update_covisibility(shared_current); // update the covisibility graph
 
+  // track the local map
   track_local_map(shared_current);
-  // map.local_bundle_adjustment(shared_current, model);
 
+  // create new map points from unmatched points
   const auto mps = shared_current->create_map_points();
   for (const auto & [idx, map_point]: mps) {
     map.add_map_point(map_point);
-    map.link_keyframe_to_map_point(shared_current, idx, map_point);
   }
   map.update_covisibility(shared_current);
+
+  // attempt to loop close
+  loop_closing(shared_current);
 
   previous_keyframe = current;
 }
@@ -182,7 +195,6 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
     local_set.insert(mp);
   }
 
-  // std::cout << "LOCAL MAP SIZE: " << local_set.size() << "\n";
 
   // filter map points
   int count = 0;
@@ -212,8 +224,6 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
   }
 
   map.update_covisibility(key_frame);
-
-  // std::cout << "ADDITIONAL MATCHES: " << count << " " << key_frame->get_map_points().size() << "\n";
 }
 
 std::pair<Eigen::Matrix4d, std::vector<int>> Reconstruction::pnp(
@@ -235,7 +245,7 @@ std::pair<Eigen::Matrix4d, std::vector<int>> Reconstruction::pnp(
   cv::Mat k = model_to_mat(model);
   cv::solvePnPRansac(
     world_points_cv, image_points, k,
-    cv::noArray(), rvec, tvec, false, 2000, 8.0, 0.99, inliers, cv::SOLVEPNP_SQPNP);
+    cv::noArray(), rvec, tvec, false, 100, 8.0, 0.99, inliers, cv::SOLVEPNP_SQPNP);
 
   // convert screw to transformation matrix
   cv::Mat rotation_mat;
@@ -254,5 +264,179 @@ std::pair<Eigen::Matrix4d, std::vector<int>> Reconstruction::pnp(
   return {transformation, inliers};
 }
 
+void Reconstruction::loop_closing(std::shared_ptr<KeyFrame> key_frame)
+{
+  const auto candidate_keyframes = loop_candidate_detection(key_frame);
+  const auto candidate_groups = loop_candidate_refinment(key_frame, candidate_keyframes);
+  loop_candidate_geometric(key_frame, candidate_groups);
+}
+
+std::vector<std::shared_ptr<KeyFrame>> Reconstruction::loop_candidate_detection(
+  std::shared_ptr<KeyFrame> key_frame)
+{
+  // get neighbors in the covisibility graph
+  const auto neighbors = map.get_neighbors(key_frame);
+
+  // find the minimum score against the neighboring bow vectors
+  double min_score = std::numeric_limits<double>::max();
+  for (const auto & neighbor: neighbors) {
+    const auto score = place_recognition.score(*key_frame, *neighbor);
+    if (score < min_score) {
+      min_score = score;
+    }
+  }
+  // query with the minimum score amongst the neighbors
+  const auto matches = place_recognition.query(*key_frame, -1, map, min_score);
+
+  // exclude all matches in the covisibility graph
+  std::vector<std::shared_ptr<KeyFrame>> loop_candidates;
+  std::copy_if(
+    matches.begin(), matches.end(), std::back_inserter(loop_candidates),
+    [&neighbors, &key_frame](const auto & match) {
+      return std::find(neighbors.begin(), neighbors.end(), match) == neighbors.end();
+    });
+
+  // std::cout << "loop candidates: " << loop_candidates.size() << std::endl;
+
+  return loop_candidates;
+}
+
+std::vector<KeyFrameGroup> Reconstruction::loop_candidate_refinment(
+  const std::shared_ptr<KeyFrame> key_frame,
+  const std::vector<std::shared_ptr<KeyFrame>> & candidates)
+{
+  std::vector<bool> in_group(candidates.size());
+  for (auto & group: keyframe_groups) {
+
+    for (const auto & [idx, candidate]: std::views::enumerate(candidates)) {
+      if (!in_group[idx]) {
+        const auto & candidate_cov = map.get_neighbors(candidate);
+        if (group.covisibility.find(candidate) != group.covisibility.end()) {
+          // is the candidate in the group directly
+          group.expanded = true;
+          group.expanded_count++;
+          group.key_frames.insert(candidate);
+          group.covisibility.insert(candidate_cov.begin(), candidate_cov.end());
+          group.covisibility.insert(candidate);
+          in_group.at(idx) = true;
+          break;
+        } else {
+          // is the candidate in the group indirectly
+          for (const auto & kf: candidate_cov) {
+            if (group.covisibility.find(kf) != group.covisibility.end()) {
+              group.expanded = true;
+              group.expanded_count++;
+              group.key_frames.insert(candidate);
+              group.covisibility.insert(candidate_cov.begin(), candidate_cov.end());
+              group.covisibility.insert(candidate);
+              in_group.at(idx) = true;
+              break; // only need to find one
+            }
+          }
+        }
+      }
+
+      if (group.expanded) {
+        break; // only expand each group once
+      }
+    }
+  }
+
+  // remove groups that were not expanded
+  keyframe_groups.erase(
+    std::remove_if(
+      keyframe_groups.begin(), keyframe_groups.end(),
+      [](auto & group) {
+        const auto remove = !group.expanded;
+        group.expanded = false; // reset for next iteration
+        return remove;
+      }
+    ),
+    keyframe_groups.end()
+  );
+
+
+  // check if any groups meet the threshold
+  std::vector<KeyFrameGroup> consistent_groups;
+  std::copy_if(
+    keyframe_groups.begin(), keyframe_groups.end(), std::back_inserter(consistent_groups),
+    [](const auto & group) {
+      return group.expanded_count >= expansion_consistency_threshold;
+    });
+
+  // remove groups that meet the expansion threshold
+  keyframe_groups.erase(
+    std::remove_if(
+      keyframe_groups.begin(), keyframe_groups.end(),
+      [](auto & group) {
+        return group.expanded_count >= expansion_consistency_threshold;
+      }
+    ),
+    keyframe_groups.end()
+  );
+
+  // create new groups for the candidates that are not in a group
+  for (const auto & [idx, in]: std::views::enumerate(in_group)) {
+    if (!in) {
+      KeyFrameGroup group;
+      group.key_frames.insert(candidates[idx]);
+      group.covisibility.insert(candidates[idx]);
+      const auto & neighbors = map.get_neighbors(candidates[idx]);
+      group.covisibility.insert(neighbors.begin(), neighbors.end());
+      keyframe_groups.push_back(group);
+    }
+  }
+
+  // std::cout << "met consistency: " << consistent_groups.size() << std::endl;
+  return consistent_groups;
+}
+
+void Reconstruction::loop_candidate_geometric(
+  std::shared_ptr<KeyFrame> key_frame,
+  const std::vector<KeyFrameGroup> & groups)
+{
+  for (const auto & group: groups) {
+    // get all the map points in the group
+    std::unordered_set<std::shared_ptr<MapPoint>> mp_set;
+    for (const auto & kf: group.key_frames) {
+      const auto mps = kf->get_map_points();
+      mp_set.insert(mps.begin(), mps.end());
+    }
+    std::vector<std::shared_ptr<MapPoint>> mps{mp_set.begin(), mp_set.end()};
+
+    // create a cv::Mat of the descriptors for all the map points
+    cv::Mat descriptors;
+    for (const auto & mp: mps) {
+      descriptors.push_back(mp->description());
+    }
+    std::vector<cv::DMatch> matches;
+    matcher->match(key_frame->get_descriptors_mat(), descriptors, matches);
+
+    // get 2D 3D correspondences
+    std::vector<cv::Point2d> image_points;
+    std::vector<Eigen::Vector3d> world_points;
+    for (const auto & match: matches) {
+      image_points.push_back(key_frame->get_keypoints()[match.queryIdx].pt);
+      world_points.push_back(mps[match.trainIdx]->position());
+    }
+
+    try {
+      const auto [transformation, inliers] = pnp(image_points, world_points);
+
+      size_t count = std::count_if(
+        inliers.begin(), inliers.end(), [](const auto & inlier) {
+          return inlier > 0;
+        });
+
+      if (count > 30) {
+        std::cout << "inliers: " << count << std::endl;
+        std::cout << transformation << std::endl;
+      }
+
+    } catch (cv::Exception & e) {
+      std::cout << e.what() << std::endl;
+    }
+  }
+}
 
 }

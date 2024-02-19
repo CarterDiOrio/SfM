@@ -15,15 +15,21 @@ std::optional<std::pair<cv::Mat, cv::Mat>> RecordingReader::read_frames()
   std::filesystem::path cfile("color_" + std::to_string(frame_counter) + ".png");
   std::filesystem::path dfile("depth_" + std::to_string(frame_counter) + ".png");
 
-  auto cpath = std::filesystem::canonical(dir / cfile);
-  auto dpath = std::filesystem::canonical(dir / dfile);
-
-  // if (!std::filesystem::exists(cfile) || !std::filesystem::exists(dfile)) {
-  //   return {};
-  // }
+  std::filesystem::path cpath, dpath;
+  try {
+    cpath = std::filesystem::canonical(dir / cfile);
+    dpath = std::filesystem::canonical(dir / dfile);
+  } catch (std::filesystem::filesystem_error & e) {
+    return {};
+  }
 
   auto color_image = cv::imread(cpath.string(), cv::IMREAD_COLOR);
   auto depth_image = cv::imread(dpath.string(), cv::IMREAD_ANYDEPTH);
+
+  if (color_image.empty() || depth_image.empty()) {
+    return {};
+  }
+
   frame_counter += 1;
   return std::pair{
     color_image,

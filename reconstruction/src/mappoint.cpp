@@ -1,8 +1,11 @@
 #include "reconstruction/mappoint.hpp"
 #include "reconstruction/keyframe.hpp"
 
+#include <algorithm>
+#include <iterator>
 #include <memory>
 #include <ranges>
+#include <iostream>
 
 namespace sfm
 {
@@ -21,6 +24,46 @@ MapPoint::MapPoint(
 void MapPoint::add_keyframe(std::weak_ptr<KeyFrame> keyframe)
 {
   keyframes.push_back(keyframe);
+
+  // get all of the descriptors and 3d locations
+  std::vector<cv::Mat> descriptors;
+  std::vector<Eigen::Vector3d> positions;
+  for (const auto & kf: keyframes) {
+    auto shared_kf = kf.lock();
+    auto descriptor = shared_kf->get_descriptor(shared_from_this());
+    descriptors.push_back(descriptor.value());
+    positions.push_back(shared_kf->get_observed_location_3d(shared_from_this()));
+  }
+
+  // find the best descriptor
+  std::vector<double> scores;
+  for (const auto & desc: descriptors) {
+    scores.push_back(0.0);
+    for (const auto & other_desc: descriptors) {
+      scores[scores.size() - 1] += cv::norm(desc, other_desc, cv::NORM_HAMMING);
+    }
+  }
+  size_t idx = std::distance(scores.begin(), std::min_element(scores.begin(), scores.end()));
+
+  desc = descriptors[idx];
+
+  // find the 3D location with the lowest reprojection error
+  std::vector<double> reprojection_errors;
+  for (const auto & observed_pos: positions) {
+    double err = 0.0;
+    for (const auto & kf: keyframes) {
+      auto shared_kf = kf.lock();
+      err += keyframe_reprojection_error(
+        *shared_kf,
+        shared_from_this(), observed_pos);
+    }
+    reprojection_errors.push_back(err);
+  }
+  idx = std::distance(
+    reprojection_errors.begin(),
+    std::min_element(reprojection_errors.begin(), reprojection_errors.end()));
+
+  pos = positions[idx];
 }
 
 Eigen::Vector3d MapPoint::position() const

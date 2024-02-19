@@ -1,14 +1,14 @@
 #ifndef INC_GUARD_KEYFRAME_HPP
 #define INC_GUARD_KEYFRAME_HPP
 
-
+#include <DBoW2/BowVector.h>
+#include <opencv2/core/mat.hpp>
 #include <vector>
 #include <opencv2/core.hpp>
 #include <opencv2/features2d.hpp>
 #include <Eigen/Dense>
 #include <optional>
 #include <memory>
-#include <span>
 
 #include "reconstruction/pinhole.hpp"
 #include "reconstruction/keyframe.fwd.hpp"
@@ -33,7 +33,8 @@ public:
     std::vector<cv::KeyPoint> keypoints,
     cv::Mat descriptions,
     cv::Mat img,
-    cv::Mat depth);
+    cv::Mat depth,
+    PinholeModel model);
 
   /// @brief Gets the 3x3 camera calibration matrix
   /// @return the camera calibration matrix
@@ -59,6 +60,18 @@ public:
   /// @return a pair of {keypoint, description}
   std::pair<cv::KeyPoint, cv::Mat> get_point(int i) const;
 
+  /// @brief Gets the descriptors for the features in the key frame
+  /// @return a vector of the descriptors
+  std::vector<cv::Mat> get_descriptors() const;
+
+  /// @brief Gets the bag of words vector for the key frame
+  /// @return the bag of words vector
+  DBoW2::BowVector get_bow_vector() const;
+
+  /// @brief Sets the bag of words vector for the key frame
+  /// @param place_recognition the place recognition object to use to create the bow vector
+  void set_bow_vector(const DBoW2::BowVector & bow_vector);
+
   /// @brief Matches keypoints with the other descriptions and returns the matches
   /// @param query_descriptiors the keypoint descriptions
   /// @param matcher the matcher to use
@@ -82,6 +95,11 @@ public:
   /// @return a double of {x, y} pixel locations
   std::pair<double, double> get_observed_location(const std::shared_ptr<MapPoint> map_point) const;
 
+  /// @brief gets the observed location of a map point in 3D world coordinates
+  /// @param map_point the map point to get the observed location of
+  /// @return a Vector3d of {x, y, z} world locations
+  Eigen::Vector3d get_observed_location_3d(const std::shared_ptr<MapPoint> map_point) const;
+
   /// @brief Gets the keypoints from the keyframe
   /// @return the vector of key points
   const std::vector<cv::KeyPoint> & get_keypoints() const;
@@ -93,6 +111,15 @@ public:
   /// @brief gets the map points linked to the key frame
   /// @returns a vector of map points
   std::vector<std::shared_ptr<MapPoint>> get_map_points() const;
+
+  /// @brief gets the descriptor associated with a map point
+  /// @param map_point the map point to get the descriptor for
+  /// @return the descriptor
+  std::optional<cv::Mat> get_descriptor(std::shared_ptr<MapPoint> map_point) const;
+
+  /// @brief gets the descriptors for the key frame
+  /// @return the descriptors
+  cv::Mat get_descriptors_mat() const;
 
   /// @brief gets the indicies of the unmatched features within the radius of a point
   /// @param x the x location of the point
@@ -119,6 +146,12 @@ private:
   /// @brief The descriptiors for each keypoint
   const cv::Mat descriptors;
 
+  /// @brief The descriptors for each keypoint
+  std::vector<cv::Mat> descriptors_vec;
+
+  /// @brief The bow vector for the key frame
+  DBoW2::BowVector bow_vector;
+
   /// @brief The depth image for the key frame
   const cv::Mat depth_img;
 
@@ -131,6 +164,8 @@ private:
 
   /// @brief map point id to key point idx
   std::unordered_map<std::shared_ptr<MapPoint>, size_t> mp_to_kp_index;
+
+  std::vector<Eigen::Vector3d> deprojected_points;
 };
 
 /// @brief projects the map point into the image frame of the key frame
@@ -138,6 +173,16 @@ private:
 /// @param map_point the map point to project
 /// @return the 2D point in the image frame
 cv::Point2d project_map_point(const KeyFrame & key_frame, const MapPoint & map_point);
+
+/// @brief calculates the reprojection error of a map point in the key frame
+/// @param key_frame the key frame to calculate the error for
+/// @param map_point the map point to calculate the error for
+/// @param world_point The 3D world point. This is a proposed location for the passed map point.
+/// @return the reprojection error
+double keyframe_reprojection_error(
+  const KeyFrame & key_frame,
+  const std::shared_ptr<MapPoint> map_point,
+  const Eigen::Vector3d & world_point);
 }
 
 #endif

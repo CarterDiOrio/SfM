@@ -11,7 +11,7 @@
 namespace sfm
 {
 /// @brief Models a 3D point in the map
-class MapPoint
+class MapPoint : public std::enable_shared_from_this<MapPoint>
 {
 public:
   MapPoint(

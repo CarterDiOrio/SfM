@@ -1,6 +1,5 @@
 #include "reconstruction/map.hpp"
 
-#include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Geometry/AngleAxis.h>
 #include <algorithm>
 #include <ceres/loss_function.h>
@@ -36,10 +35,11 @@ std::weak_ptr<KeyFrame> Map::create_keyframe(
   std::vector<cv::KeyPoint> keypoints,
   cv::Mat descriptions,
   cv::Mat img,
-  cv::Mat depth)
+  cv::Mat depth,
+  PinholeModel model)
 {
   const auto new_keyframe =
-    std::make_shared<KeyFrame>(K, T_kw, keypoints, descriptions, img, depth);
+    std::make_shared<KeyFrame>(K, T_kw, keypoints, descriptions, img, depth, model);
   keyframes.push_back(new_keyframe);
   covisibility[new_keyframe] = {};
   return new_keyframe;
@@ -85,6 +85,7 @@ void Map::update_covisibility(std::shared_ptr<KeyFrame> key_frame)
     }
   }
 
+
   for (const auto & [kf, count]: key_frame_count) {
     if (count > covisibility_minimum) {
       covisibility_insert(key_frame, kf);
@@ -96,6 +97,13 @@ void Map::covisibility_insert(
   std::shared_ptr<KeyFrame> key_frame_1,
   std::shared_ptr<KeyFrame> key_frame_2)
 {
+  // check if the key frames are already in the graph
+  if (std::find(covisibility[key_frame_1].begin(), covisibility[key_frame_1].end(), key_frame_2) !=
+    covisibility[key_frame_1].end())
+  {
+    return;
+  }
+
   covisibility[key_frame_1].push_back(key_frame_2);
   covisibility[key_frame_2].push_back(key_frame_1);
 }
@@ -142,6 +150,12 @@ std::vector<key_frame_set_t> Map::get_local_map(
   }
 
   return sets;
+}
+
+std::vector<std::shared_ptr<KeyFrame>> Map::get_neighbors(
+  std::shared_ptr<KeyFrame> key_frame)
+{
+  return covisibility[key_frame];
 }
 
 void Map::local_bundle_adjustment(std::shared_ptr<KeyFrame> key_frame, PinholeModel model)

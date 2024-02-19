@@ -13,24 +13,26 @@ int main()
 {
   // sfm::PinholeModel model{913.848, 913.602, 642.941, 371.196};
   sfm::PinholeModel model{718.856, 718.856, 607.1928, 185.2157};
-  sfm::utils::RecordingReader reader{"../kitti"};
+  sfm::utils::RecordingReader reader{"./stuff/kitti"};
 
   sfm::ReconstructionOptions options{
     model,
-    50.0
+    50.0,
+    "/home/cdiorio/ws/winter/stuff/small_voc"
   };
   sfm::Reconstruction reconstruction{options};
 
-  for (size_t i = 0; i < 4500; i++) {
-    auto f1 = reader.read_frames();
-
-    if (i % 1 == 0) {
-      const auto & [c, d] = f1.value();
+  auto frames = reader.read_frames();
+  for (size_t i = 0; frames.has_value(); i++) {
+    const auto & [c, d] = frames.value();
+    if (i % 2 == 0) {
       reconstruction.add_frame_ordered(c, d);
       if (cv::waitKey(1) == 'q') {
         break;
       }
     }
+
+    frames = reader.read_frames();
   }
 
   std::ofstream file;

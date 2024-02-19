@@ -14,7 +14,7 @@
 
 namespace sfm
 {
-constexpr unsigned int covisibility_minimum = 15;
+constexpr unsigned int covisibility_minimum = 30;
 
 using key_frame_set_t = std::vector<std::shared_ptr<KeyFrame>>;
 
@@ -48,7 +48,8 @@ public:
     std::vector<cv::KeyPoint> keypoints,
     cv::Mat descriptions,
     cv::Mat img,
-    cv::Mat depth);
+    cv::Mat depth,
+    PinholeModel model);
 
   /// @brief Gets a keyframe with the given keyframe id
   /// @param k_id the id of the keyframe
@@ -92,6 +93,12 @@ public:
     std::shared_ptr<KeyFrame> key_frame,
     size_t distance);
 
+  /// @brief gets the neighbors to the key frame in the covisibility graph
+  /// @param key_frame the key frame to get the neighbors of
+  /// @return a vector of the neighbors
+  std::vector<std::shared_ptr<KeyFrame>> get_neighbors(
+    std::shared_ptr<KeyFrame> key_frame);
+
   /// @brief performs bundle adjustment on the local map around a keyframe
   /// @param key_frame the key frame to perform bundle adjustment around
   void local_bundle_adjustment(
@@ -104,10 +111,10 @@ public:
     return mappoints.size();
   }
 
-private:
   /// @brief all the key frames in the map
   std::vector<std::shared_ptr<KeyFrame>> keyframes;
 
+private:
   /// @brief all the map points in the map
   std::vector<std::shared_ptr<MapPoint>> mappoints;
 
