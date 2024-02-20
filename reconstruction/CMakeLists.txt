@@ -21,6 +21,7 @@ find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(OpenCV REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(DBoW2 REQUIRED)
+find_package(Sophus REQUIRED)
 
 # Create an executable from the following source code files
 # The Name of the executable creates a cmake "target"
@@ -60,8 +61,8 @@ target_compile_features(build_vocab PUBLIC cxx_std_23)
 # This will automatically add all required library files
 # that need to be linked
 # and paths to th locations of header files
-target_link_libraries(reconstruct Eigen3::Eigen ${OpenCV_LIBS} Ceres::ceres ${DBoW2_LIBS})
-target_link_libraries(reconstruction Eigen3::Eigen ${OpenCV_LIBS} Ceres::ceres ${DBoW2_LIBS})
+target_link_libraries(reconstruct Eigen3::Eigen ${OpenCV_LIBS} Ceres::ceres ${DBoW2_LIBS} Sophus::Sophus)
+target_link_libraries(reconstruction Eigen3::Eigen ${OpenCV_LIBS} Ceres::ceres ${DBoW2_LIBS} Sophus::Sophus)
 target_link_libraries(build_vocab  ${OpenCV_LIBS} ${DBoW2_LIBS})
 
 target_include_directories(reconstruct

@@ -7,19 +7,17 @@
 #include <ceres/cost_function.h>
 #include <ceres/problem.h>
 
+#include <sophus/se3.hpp>
+
 namespace sfm
 {
 class PoseGraph3dErrorTerm
 {
 public:
   PoseGraph3dErrorTerm(
-    Eigen::Matrix4d T_ab_measured,
-    double scaler = 1.0
+    Eigen::Matrix4d T_ab_measured
   )
-  : T_ab_measured{T_ab_measured},
-    q_ab_measured{T_ab_measured.block<3, 3>(0, 0)},
-    p_ab_measured{T_ab_measured.block<3, 1>(0, 3)},
-    scaler{scaler}
+  : T_ab_measured{T_ab_measured}
   {}
 
   /// @brief The residual function
@@ -30,53 +28,36 @@ public:
   /// @param residuals_ptr the pointer to the residuals
   template<typename T>
   bool operator()(
-    const T * const p_a_ptr, const T * q_a_ptr,
-    const T * const p_b_ptr, const T * q_b_ptr,
+    const T * const a_se3_vec,
+    const T * const b_se3_vec,
     T * residuals_ptr) const
   {
-    // map quaternions to eigen types
-    Eigen::Map<const Eigen::Matrix<T, 3, 1>> p_a(p_a_ptr);
-    Eigen::Map<const Eigen::Quaternion<T>> q_a(q_a_ptr);
-    Eigen::Map<const Eigen::Matrix<T, 3, 1>> p_b(p_b_ptr);
-    Eigen::Map<const Eigen::Quaternion<T>> q_b(q_b_ptr);
+    Eigen::Map<const Eigen::Matrix<T, 6, 1>> a_se3(a_se3_vec);
+    Eigen::Map<const Eigen::Matrix<T, 6, 1>> b_se3(b_se3_vec);
 
-    Eigen::Matrix<T, 4, 4> T_aw = Eigen::Matrix<T, 4, 4>::Identity();
-    T_aw.template block<3, 3>(0, 0) = q_a.toRotationMatrix();
-    T_aw.template block<3, 1>(0, 3) = p_a;
-    Eigen::Matrix<T, 4, 4> T_bw = Eigen::Matrix<T, 4, 4>::Identity();
-    T_bw.template block<3, 3>(0, 0) = q_b.toRotationMatrix();
-    T_bw.template block<3, 1>(0, 3) = p_b;
+    Eigen::Matrix<T, 4, 4> T_a = Sophus::SE3<T>::exp(a_se3).matrix();
+    Eigen::Matrix<T, 4, 4> T_b = Sophus::SE3<T>::exp(b_se3).matrix();
 
-    Eigen::Matrix<T, 4, 4> T_ab_est = T_aw * T_bw.inverse();
-    Eigen::Matrix<T, 3, 3> R_ab_est = T_ab_est.template block<3, 3>(0, 0);
+    Eigen::Matrix<T, 4, 4> T_id = T_ab_measured.template cast<T>() * T_b * T_a.inverse();
+    Eigen::Vector<T, 6> e_ab = Sophus::SE3<T>{T_id}.log();
 
-    Eigen::Matrix<T, 3, 1> p_ab_est = p_ab_measured.template cast<T>() - T_ab_est.template block<3,
-        1>(
-      0,
-      3);
+    T cost = e_ab.transpose() * Eigen::Matrix<T, 6, 6>::Identity() * e_ab;
 
-    Eigen::Quaternion<T> q_ab_est{R_ab_est};
-    Eigen::Quaternion<T> delta_q = q_ab_measured.template cast<T>() * q_ab_est.conjugate();
-
-    Eigen::Map<Eigen::Matrix<T, 6, 1>> residuals(residuals_ptr);
-    residuals.template block<3, 1>(0, 0) = p_ab_est * scaler;
-    residuals.template block<3, 1>(3, 0) = delta_q.vec() * scaler;
+    // map residuals
+    residuals_ptr[0] = cost;
 
     return true;
   }
 
   static ceres::CostFunction * Create(
-    const Eigen::Matrix4d T_ab_measured, double scaler = 1.0)
+    const Eigen::Matrix4d T_ab_measured)
   {
-    return new ceres::AutoDiffCostFunction<PoseGraph3dErrorTerm, 6, 3, 4, 3, 4>(
+    return new ceres::AutoDiffCostFunction<PoseGraph3dErrorTerm, 1, 6, 6>(
       new PoseGraph3dErrorTerm(T_ab_measured));
   }
 
 private:
   Eigen::Matrix4d T_ab_measured;
-  Eigen::Quaterniond q_ab_measured;
-  Eigen::Vector3d p_ab_measured;
-  double scaler;
 };
 }
 

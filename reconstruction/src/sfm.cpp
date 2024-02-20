@@ -17,6 +17,7 @@
 #include <opencv2/features2d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/highgui.hpp>
+#include <sophus/se3.hpp>
 
 #include "reconstruction/mappoint.hpp"
 #include "reconstruction/keyframe.hpp"
@@ -548,34 +549,28 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
     kf->set_world_to_camera(transform);
   }
 
-  // create quaternion representations for each key frame
-  std::unordered_map<KeyFramePtr, std::pair<Eigen::Vector3d, Eigen::Quaterniond>> kf_q_poses;
+
+  // create se3 representations for each frame
+  std::unordered_map<KeyFramePtr, Eigen::Vector<double, 6>> kf_poses;
   for (const auto & kf: map.get_key_frames()) {
-    const auto tf = kf->world_to_camera();
-    const Eigen::Quaterniond q{tf.block<3, 3>(0, 0)};
-    const Eigen::Vector3d p{tf.block<3, 1>(0, 3)};
-    kf_q_poses[kf] = {p, q};
+    Sophus::SE3<double> SE3{kf->world_to_camera()};
+    Eigen::Matrix<double, 6, 1> se3_vec = SE3.log();
+    kf_poses[kf] = se3_vec;
   }
 
   // optimize
   ceres::Problem problem;
   ceres::LossFunction * loss_function = nullptr;
-  ceres::Manifold * quaternion_manifold = new ceres::EigenQuaternionManifold;
 
   // add loop edges to the problem
   for (const auto & [kf_a, pair]: loop_edges) {
     const auto & [kf_b, T_ab] = pair;
-    auto & a_poses = kf_q_poses[kf_a];
-    auto & b_poses = kf_q_poses[kf_b];
+    auto & a_se3_vec = kf_poses[kf_a];
+    auto & b_se3_vec = kf_poses[kf_b];
     ceres::CostFunction * cost_function = PoseGraph3dErrorTerm::Create(T_ab);
     problem.AddResidualBlock(
       cost_function, loss_function,
-      a_poses.first.data(), a_poses.second.coeffs().data(),
-      b_poses.first.data(), b_poses.second.coeffs().data());
-
-    //convert T_ab to a quaternion
-    problem.SetManifold(a_poses.second.coeffs().data(), quaternion_manifold);
-    problem.SetManifold(b_poses.second.coeffs().data(), quaternion_manifold);
+      a_se3_vec.data(), b_se3_vec.data());
   }
 
   // get all normal edges to the problem
@@ -601,27 +596,19 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
 
   // add normal edges to the problem
   for (const auto & [kf_a, kf_b]: normal_edges) {
-    auto & a_poses = kf_q_poses[kf_a];
-    auto & b_poses = kf_q_poses[kf_b];
-    const auto [p_a, q_a] = a_poses;
-    const auto [p_b, q_b] = b_poses;
+    auto & a_pose = kf_poses[kf_a];
+    auto & b_pose = kf_poses[kf_b];
 
     ceres::CostFunction * cost_function = PoseGraph3dErrorTerm::Create(
       kf_a->world_to_camera() * kf_b->transform());
     problem.AddResidualBlock(
       cost_function, loss_function,
-      a_poses.first.data(), a_poses.second.coeffs().data(),
-      b_poses.first.data(), b_poses.second.coeffs().data());
-
-    //convert T_ab to a quaternion
-    problem.SetManifold(a_poses.second.coeffs().data(), quaternion_manifold);
-    problem.SetManifold(b_poses.second.coeffs().data(), quaternion_manifold);
+      a_pose.data(), b_pose.data());
   }
 
   // set one pose as constant to avoid gauge freedom issues
-  const auto & [p, q] = kf_q_poses[map.get_key_frames()[0]];
-  problem.SetParameterBlockConstant(p.data());
-  problem.SetParameterBlockConstant(q.coeffs().data());
+  const auto & se3_vec = kf_poses[map.get_key_frames()[0]];
+  problem.SetParameterBlockConstant(se3_vec.data());
 
   ceres::Solver::Options options;
   options.sparse_linear_algebra_library_type = ceres::SUITE_SPARSE;
@@ -632,11 +619,8 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
   ceres::Solve(options, &problem, &summary);
   // std::cout << summary.FullReport() << std::endl;
 
-  for (const auto & [kf, pair]: kf_q_poses) {
-    const auto & [p, q] = pair;
-    Eigen::Matrix4d tf = Eigen::Matrix4d::Identity();
-    tf.block<3, 3>(0, 0) = q.toRotationMatrix();
-    tf.block<3, 1>(0, 3) = p;
+  for (const auto & [kf, se3_vec]: kf_poses) {
+    Eigen::Matrix4d tf = Sophus::SE3<double>::exp(se3_vec).matrix();
     kf->set_world_to_camera(tf);
   }
 
