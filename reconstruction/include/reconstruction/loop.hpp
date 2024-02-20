@@ -3,7 +3,9 @@
 
 #include "ceres/autodiff_cost_function.h"
 #include <Eigen/Geometry>
+#include <Eigen/src/Geometry/Quaternion.h>
 #include <ceres/cost_function.h>
+#include <ceres/problem.h>
 
 namespace sfm
 {
@@ -11,10 +13,13 @@ class PoseGraph3dErrorTerm
 {
 public:
   PoseGraph3dErrorTerm(
-    Eigen::Matrix4f T_ab_measured
+    Eigen::Matrix4d T_ab_measured,
+    double scaler = 1.0
   )
   : T_ab_measured{T_ab_measured},
-    q_ab_measured{T_ab_measured.block<3, 3>(0, 0)}
+    q_ab_measured{T_ab_measured.block<3, 3>(0, 0)},
+    p_ab_measured{T_ab_measured.block<3, 1>(0, 3)},
+    scaler{scaler}
   {}
 
   /// @brief The residual function
@@ -35,34 +40,43 @@ public:
     Eigen::Map<const Eigen::Matrix<T, 3, 1>> p_b(p_b_ptr);
     Eigen::Map<const Eigen::Quaternion<T>> q_b(q_b_ptr);
 
-    // Compute the relative transformation between the two frames
-    Eigen::Quaternion<T> q_a_inv = q_a.conjugate();
-    Eigen::Quaternion<T> q_ab_est = q_a_inv * q_b;
+    Eigen::Matrix<T, 4, 4> T_aw = Eigen::Matrix<T, 4, 4>::Identity();
+    T_aw.template block<3, 3>(0, 0) = q_a.toRotationMatrix();
+    T_aw.template block<3, 1>(0, 3) = p_a;
+    Eigen::Matrix<T, 4, 4> T_bw = Eigen::Matrix<T, 4, 4>::Identity();
+    T_bw.template block<3, 3>(0, 0) = q_b.toRotationMatrix();
+    T_bw.template block<3, 1>(0, 3) = p_b;
 
-    // Represent the displacement in the A frame
-    Eigen::Matrix<T, 3, 1> p_ab_est = q_a_inv * (p_b - p_a);
+    Eigen::Matrix<T, 4, 4> T_ab_est = T_aw * T_bw.inverse();
+    Eigen::Matrix<T, 3, 3> R_ab_est = T_ab_est.template block<3, 3>(0, 0);
 
-    // compute the error between the two orientation estimates
+    Eigen::Matrix<T, 3, 1> p_ab_est = p_ab_measured.template cast<T>() - T_ab_est.template block<3,
+        1>(
+      0,
+      3);
+
+    Eigen::Quaternion<T> q_ab_est{R_ab_est};
     Eigen::Quaternion<T> delta_q = q_ab_measured.template cast<T>() * q_ab_est.conjugate();
 
-    // Compute the residuals
     Eigen::Map<Eigen::Matrix<T, 6, 1>> residuals(residuals_ptr);
-    residuals.template block<3, 1>(0, 0) = p_ab_est - T_ab_measured.block<3, 1>(
-      3, 0).template cast<T>();
+    residuals.template block<3, 1>(0, 0) = p_ab_est * scaler;
+    residuals.template block<3, 1>(3, 0) = delta_q.vec() * scaler;
 
     return true;
   }
 
   static ceres::CostFunction * Create(
-    const Eigen::Matrix4f T_ab_measured)
+    const Eigen::Matrix4d T_ab_measured, double scaler = 1.0)
   {
     return new ceres::AutoDiffCostFunction<PoseGraph3dErrorTerm, 6, 3, 4, 3, 4>(
       new PoseGraph3dErrorTerm(T_ab_measured));
   }
 
 private:
-  Eigen::Matrix4f T_ab_measured;
-  Eigen::Quaternionf q_ab_measured;
+  Eigen::Matrix4d T_ab_measured;
+  Eigen::Quaterniond q_ab_measured;
+  Eigen::Vector3d p_ab_measured;
+  double scaler;
 };
 }
 

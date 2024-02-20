@@ -17,6 +17,8 @@
 namespace sfm
 {
 
+using KeyFramePtr = std::shared_ptr<KeyFrame>;
+
 class MapPoint;
 
 class KeyFrame : public std::enable_shared_from_this<KeyFrame>

@@ -181,6 +181,11 @@ void Map::remove_map_point(std::shared_ptr<MapPoint> map_point)
   }
 }
 
+std::vector<KeyFramePtr> Map::get_key_frames()
+{
+  return keyframes;
+}
+
 void Map::local_bundle_adjustment(std::shared_ptr<KeyFrame> key_frame, PinholeModel model)
 {
   // get the key frames connected to the current key frame directly

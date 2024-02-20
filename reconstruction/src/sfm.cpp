@@ -1,9 +1,14 @@
 #include "reconstruction/sfm.hpp"
 
-#include <Eigen/src/Core/Matrix.h>
+#include <Eigen/src/Geometry/Quaternion.h>
 #include <algorithm>
+#include <ceres/loss_function.h>
+#include <ceres/manifold.h>
+#include <ceres/solver.h>
+#include <ceres/types.h>
 #include <ctime>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/base.hpp>
@@ -19,6 +24,7 @@
 #include "reconstruction/place_recognition.hpp"
 #include "reconstruction/utils.hpp"
 
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <ranges>
@@ -159,11 +165,6 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
 
   // attempt to loop close
   loop_closing(shared_current);
-
-  std::cout << shared_current->transform().row(0) << ' ' << shared_current->transform().row(1) <<
-    ' ' <<
-    shared_current->transform().row(2) << std::endl;
-
 
   previous_keyframe = current;
 }
@@ -449,15 +450,18 @@ std::optional<KeyFrameGroup> Reconstruction::loop_candidate_geometric(
 
 void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameGroup & group)
 {
-  std::cout << "LOOP CLOSURE!" << std::endl;
-  //get the transform between the key frame and each of its neighbors
+  std::cout << "loop closure" << std::endl;
   auto loop_key_frames = map.get_neighbors(key_frame);
   const Eigen::Matrix4d T_kw = group.T_wk.inverse();
 
   // the loop closed transform propogated to each of the key frames neighbors
+  std::unordered_map<KeyFramePtr, Eigen::Matrix4d> original_transforms;
+  original_transforms[key_frame] = key_frame->world_to_camera();
+
   for (auto & neighbor: loop_key_frames) {
     // We want T_kn_w = T_kn_k  * T_kw
     // T_kn_k = T_kn_w * T_wk
+    original_transforms[neighbor] = neighbor->world_to_camera();
     Eigen::Matrix4d T_kn_k = neighbor->world_to_camera() * key_frame->transform();
     Eigen::Matrix4d T_kn_w = T_kn_k * T_kw;
     neighbor->set_world_to_camera(T_kn_w);
@@ -475,6 +479,8 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
     }
   }
 
+  std::unordered_map<KeyFramePtr, std::pair<KeyFramePtr, Eigen::Matrix4d>> loop_edges;
+
   // project and match map points
   for (const auto & loop_kf: loop_key_frames) {
     const auto in_front_filter = [transform = loop_kf->world_to_camera()](const auto mp) {
@@ -483,26 +489,24 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
                img_p.y() <= 500;
       };
 
-    size_t count = 0;
     for (const auto & mp: group_map_points | std::views::filter(in_front_filter)) {
       auto projection = project_map_point(*loop_kf, *mp);
       const auto features = loop_kf->get_features_within_radius(
-        projection.x, projection.y, 8.0,
+        projection.x,
+        projection.y,
+        8.0,
         true);
 
       if (features.size() > 0) {
         const auto mp_desc = mp->description();
 
-        double min_dist = cv::norm(mp_desc, key_frame->get_point(0).second, cv::NORM_HAMMING);
-        size_t min_idx = features[0];
-
-        for (size_t idx: features) {
-          double dist = cv::norm(mp_desc, key_frame->get_point(0).second, cv::NORM_HAMMING);
-          if (dist < min_dist) {
-            min_idx = idx;
-            min_dist = dist;
-          }
-        }
+        // find the minimum descriptor distance
+        auto min_idx = *std::min_element(
+          features.begin(), features.end(),
+          [&mp_desc, &loop_kf](const auto & idx1, const auto & idx2) {
+            return cv::norm(mp_desc, loop_kf->get_point(idx1).second, cv::NORM_HAMMING) <
+            cv::norm(mp_desc, loop_kf->get_point(idx2).second, cv::NORM_HAMMING);
+          });
 
         const auto kf_mp = loop_kf->corresponding_map_point(min_idx);
         if (kf_mp.has_value()) {
@@ -518,18 +522,125 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
             map.remove_map_point(kf_mp.value());
           }
         }
+
         map.link_keyframe_to_map_point(loop_kf, min_idx, mp);
       }
     }
 
     // add edges in the covisibility graph
+    const auto neighbors_before = map.get_neighbors(loop_kf);
     map.update_covisibility(loop_kf);
+    const auto neighbors_after = map.get_neighbors(loop_kf);
+
+    // identify new loop edges
+    for (const auto & new_neighbor: neighbors_after) {
+      if (std::find(neighbors_before.begin(), neighbors_before.end(), new_neighbor) ==
+        neighbors_before.end())
+      {
+        loop_edges[loop_kf] =
+        {new_neighbor, loop_kf->world_to_camera() * new_neighbor->transform()};
+      }
+    }
+  }
+
+  //revert to original transforms
+  for (auto & [kf, transform]: original_transforms) {
+    kf->set_world_to_camera(transform);
+  }
+
+  // create quaternion representations for each key frame
+  std::unordered_map<KeyFramePtr, std::pair<Eigen::Vector3d, Eigen::Quaterniond>> kf_q_poses;
+  for (const auto & kf: map.get_key_frames()) {
+    const auto tf = kf->world_to_camera();
+    const Eigen::Quaterniond q{tf.block<3, 3>(0, 0)};
+    const Eigen::Vector3d p{tf.block<3, 1>(0, 3)};
+    kf_q_poses[kf] = {p, q};
   }
 
   // optimize
+  ceres::Problem problem;
+  ceres::LossFunction * loss_function = nullptr;
+  ceres::Manifold * quaternion_manifold = new ceres::EigenQuaternionManifold;
+
+  // add loop edges to the problem
+  for (const auto & [kf_a, pair]: loop_edges) {
+    const auto & [kf_b, T_ab] = pair;
+    auto & a_poses = kf_q_poses[kf_a];
+    auto & b_poses = kf_q_poses[kf_b];
+    ceres::CostFunction * cost_function = PoseGraph3dErrorTerm::Create(T_ab);
+    problem.AddResidualBlock(
+      cost_function, loss_function,
+      a_poses.first.data(), a_poses.second.coeffs().data(),
+      b_poses.first.data(), b_poses.second.coeffs().data());
+
+    //convert T_ab to a quaternion
+    problem.SetManifold(a_poses.second.coeffs().data(), quaternion_manifold);
+    problem.SetManifold(b_poses.second.coeffs().data(), quaternion_manifold);
+  }
+
+  // get all normal edges to the problem
+  std::vector<std::pair<KeyFramePtr, KeyFramePtr>> normal_edges;
+  for (const auto & kf: map.get_key_frames()) {
+    for (const auto & nkf: map.get_neighbors(kf)) {
+      if (std::find(normal_edges.begin(), normal_edges.end(), std::make_pair(kf, nkf)) ==
+        normal_edges.end() &&
+        std::find(normal_edges.begin(), normal_edges.end(), std::make_pair(nkf, kf)) ==
+        normal_edges.end())
+      {
+        // make sure its not a loop edge
+        if (!((loop_edges.find(kf) != loop_edges.end() &&
+          loop_edges[kf].first == nkf) ||
+          (loop_edges.find(nkf) != loop_edges.end() && loop_edges[nkf].first == kf)))
+        {
+          normal_edges.push_back(std::make_pair(kf, nkf));
+        }
+      }
+    }
+  }
 
 
-  std::cout << "LOOP CLOSURE DONE!" << std::endl;
+  // add normal edges to the problem
+  for (const auto & [kf_a, kf_b]: normal_edges) {
+    auto & a_poses = kf_q_poses[kf_a];
+    auto & b_poses = kf_q_poses[kf_b];
+    const auto [p_a, q_a] = a_poses;
+    const auto [p_b, q_b] = b_poses;
+
+    ceres::CostFunction * cost_function = PoseGraph3dErrorTerm::Create(
+      kf_a->world_to_camera() * kf_b->transform());
+    problem.AddResidualBlock(
+      cost_function, loss_function,
+      a_poses.first.data(), a_poses.second.coeffs().data(),
+      b_poses.first.data(), b_poses.second.coeffs().data());
+
+    //convert T_ab to a quaternion
+    problem.SetManifold(a_poses.second.coeffs().data(), quaternion_manifold);
+    problem.SetManifold(b_poses.second.coeffs().data(), quaternion_manifold);
+  }
+
+  // set one pose as constant to avoid gauge freedom issues
+  const auto & [p, q] = kf_q_poses[map.get_key_frames()[0]];
+  problem.SetParameterBlockConstant(p.data());
+  problem.SetParameterBlockConstant(q.coeffs().data());
+
+  ceres::Solver::Options options;
+  options.sparse_linear_algebra_library_type = ceres::SUITE_SPARSE;
+  options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
+  options.minimizer_progress_to_stdout = true;
+  ceres::Solver::Summary summary;
+  options.max_num_iterations = 200;
+  ceres::Solve(options, &problem, &summary);
+  // std::cout << summary.FullReport() << std::endl;
+
+  for (const auto & [kf, pair]: kf_q_poses) {
+    const auto & [p, q] = pair;
+    Eigen::Matrix4d tf = Eigen::Matrix4d::Identity();
+    tf.block<3, 3>(0, 0) = q.toRotationMatrix();
+    tf.block<3, 1>(0, 3) = p;
+    kf->set_world_to_camera(tf);
+  }
+
+
   // clear key frame groups
   keyframe_groups.clear();
 }

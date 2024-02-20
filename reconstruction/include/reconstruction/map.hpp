@@ -109,19 +109,22 @@ public:
   void local_bundle_adjustment(
     std::shared_ptr<KeyFrame> key_frame, PinholeModel model);
 
+  /// @brief gets all the key frames in the map
+  std::vector<KeyFramePtr> get_key_frames();
+
   friend std::ostream & operator<<(std::ostream & os, const Map & map);
 
   inline size_t size()
   {
     return mappoints.size();
   }
+  /// @brief all the key frames in the map
+  std::vector<std::shared_ptr<KeyFrame>> keyframes;
 
 private:
   /// @brief all the map points in the map
   std::vector<std::shared_ptr<MapPoint>> mappoints;
 
-  /// @brief all the key frames in the map
-  std::vector<std::shared_ptr<KeyFrame>> keyframes;
 
   /// @brief holds the covisiblity graph
   std::unordered_map<std::shared_ptr<KeyFrame>,

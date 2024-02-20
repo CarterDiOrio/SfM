@@ -10,6 +10,7 @@
 
 namespace sfm
 {
+
 /// @brief Models a 3D point in the map
 class MapPoint : public std::enable_shared_from_this<MapPoint>
 {
@@ -72,6 +73,9 @@ private:
   /// to orb scale and invariant constraints
   double max{10.0};
 };
+
+using MapPointPtr = std::shared_ptr<MapPoint>;
+
 }
 
 

@@ -99,11 +99,11 @@ std::vector<cv::DMatch> KeyFrame::match(
 bool KeyFrame::link_map_point(size_t kp_idx, std::shared_ptr<MapPoint> map_point)
 {
   if (kp_to_mp_index.find(kp_idx) != kp_to_mp_index.end()) {
-    std::cout << "DUPLICATES KP IDX\n";
+    // std::cout << "DUPLICATES KP IDX\n";
   }
 
   if (mp_to_kp_index.find(map_point) != mp_to_kp_index.end()) {
-    std::cout << "DUPLICATES MP\n";
+    // std::cout << "DUPLICATES MP\n";
     return false;
   }
 

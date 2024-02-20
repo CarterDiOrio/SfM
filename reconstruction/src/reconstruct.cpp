@@ -35,6 +35,12 @@ int main()
     frames = reader.read_frames();
   }
 
+  for (const auto & kf: reconstruction.get_map().keyframes) {
+    const auto tf = kf->transform();
+    std::cout << tf.row(0) << ' ' << tf.row(1) << ' ' << tf.row(2) << std::endl;
+  }
+
+
   std::ofstream file;
   file.open("./kitti.txt");
   file << reconstruction.get_map();
