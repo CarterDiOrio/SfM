@@ -61,8 +61,9 @@ void Map::link_keyframe_to_map_point(
   size_t key_point_idx,
   std::shared_ptr<MapPoint> map_point)
 {
-  key_frame->link_map_point(key_point_idx, map_point);
-  map_point->add_keyframe(key_frame);
+  if (key_frame->link_map_point(key_point_idx, map_point)) {
+    map_point->add_keyframe(key_frame);
+  }
 }
 
 void Map::update_covisibility(std::shared_ptr<KeyFrame> key_frame)
@@ -85,18 +86,20 @@ void Map::update_covisibility(std::shared_ptr<KeyFrame> key_frame)
     }
   }
 
-
   for (const auto & [kf, count]: key_frame_count) {
-    if (count > covisibility_minimum) {
-      covisibility_insert(key_frame, kf);
-    }
+    covisibility_insert(key_frame, kf, count);
   }
 }
 
 void Map::covisibility_insert(
   std::shared_ptr<KeyFrame> key_frame_1,
-  std::shared_ptr<KeyFrame> key_frame_2)
+  std::shared_ptr<KeyFrame> key_frame_2,
+  size_t count)
 {
+  if (count < covisibility_minimum) {
+    return;
+  }
+
   // check if the key frames are already in the graph
   if (std::find(covisibility[key_frame_1].begin(), covisibility[key_frame_1].end(), key_frame_2) !=
     covisibility[key_frame_1].end())
@@ -104,19 +107,22 @@ void Map::covisibility_insert(
     return;
   }
 
+  covisibility_edge[key_frame_1] = count;
+  covisibility_edge[key_frame_2] = count;
   covisibility[key_frame_1].push_back(key_frame_2);
   covisibility[key_frame_2].push_back(key_frame_1);
 }
 
 std::vector<key_frame_set_t> Map::get_local_map(
   std::shared_ptr<KeyFrame> key_frame,
-  size_t distance
+  size_t distance,
+  size_t min_shared_features
 )
 {
   std::vector<key_frame_set_t> sets;
   std::vector<std::shared_ptr<KeyFrame>> visited;
 
-  auto vec = covisibility[key_frame];
+  auto vec = get_neighbors(key_frame, min_shared_features);
   std::deque<std::shared_ptr<KeyFrame>> key_frame_queue{vec.begin(), vec.end()};
   sets.push_back({vec.begin(), vec.end()});
 
@@ -139,7 +145,9 @@ std::vector<key_frame_set_t> Map::get_local_map(
       const auto current = key_frame_queue.front();
 
       // get the nodes that haven't been visited
-      for (auto kf: covisibility[current] | std::views::filter(visited_filter)) {
+      for (auto kf:
+        get_neighbors(current, min_shared_features) | std::views::filter(visited_filter))
+      {
         visited.push_back(kf);
         key_frame_queue.push_back(kf);
       }
@@ -153,9 +161,13 @@ std::vector<key_frame_set_t> Map::get_local_map(
 }
 
 std::vector<std::shared_ptr<KeyFrame>> Map::get_neighbors(
-  std::shared_ptr<KeyFrame> key_frame)
+  std::shared_ptr<KeyFrame> key_frame, size_t min_shared_features)
 {
-  return covisibility[key_frame];
+  auto kfs = covisibility[key_frame] | std::views::filter(
+    [min_shared_features, & edges = covisibility_edge](const auto & kf) {
+      return edges[kf] > min_shared_features;
+    });
+  return {kfs.begin(), kfs.end()};
 }
 
 void Map::remove_map_point(std::shared_ptr<MapPoint> map_point)

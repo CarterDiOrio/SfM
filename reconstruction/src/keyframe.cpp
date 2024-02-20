@@ -96,7 +96,7 @@ std::vector<cv::DMatch> KeyFrame::match(
   return matches;
 }
 
-void KeyFrame::link_map_point(size_t kp_idx, std::shared_ptr<MapPoint> map_point)
+bool KeyFrame::link_map_point(size_t kp_idx, std::shared_ptr<MapPoint> map_point)
 {
   if (kp_to_mp_index.find(kp_idx) != kp_to_mp_index.end()) {
     std::cout << "DUPLICATES KP IDX\n";
@@ -104,11 +104,12 @@ void KeyFrame::link_map_point(size_t kp_idx, std::shared_ptr<MapPoint> map_point
 
   if (mp_to_kp_index.find(map_point) != mp_to_kp_index.end()) {
     std::cout << "DUPLICATES MP\n";
-    return;
+    return false;
   }
 
   kp_to_mp_index[kp_idx] = map_point;
   mp_to_kp_index[map_point] = kp_idx;
+  return true;
 }
 
 std::optional<std::shared_ptr<MapPoint>> KeyFrame::corresponding_map_point(size_t keypoint_idx)

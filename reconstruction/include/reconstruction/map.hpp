@@ -1,6 +1,7 @@
 #ifndef INC_GUARD_MAP_HPP
 #define INC_GUARD_MAP_HPP
 
+#include <cstddef>
 #include <memory>
 #include <opencv2/features2d.hpp>
 #include <Eigen/Dense>
@@ -14,7 +15,7 @@
 
 namespace sfm
 {
-constexpr unsigned int covisibility_minimum = 30;
+constexpr unsigned int covisibility_minimum = 15;
 
 using key_frame_set_t = std::vector<std::shared_ptr<KeyFrame>>;
 
@@ -91,13 +92,14 @@ public:
   /// a set of nodes that have 1 higher distance than the last
   std::vector<key_frame_set_t> get_local_map(
     std::shared_ptr<KeyFrame> key_frame,
-    size_t distance);
+    size_t distance,
+    size_t min_shared_features = covisibility_minimum);
 
   /// @brief gets the neighbors to the key frame in the covisibility graph
   /// @param key_frame the key frame to get the neighbors of
   /// @return a vector of the neighbors
   std::vector<std::shared_ptr<KeyFrame>> get_neighbors(
-    std::shared_ptr<KeyFrame> key_frame);
+    std::shared_ptr<KeyFrame> key_frame, size_t min_shared_features = covisibility_minimum);
 
   /// @brief removes a map point from the map
   void remove_map_point(std::shared_ptr<MapPoint> map_point);
@@ -114,23 +116,27 @@ public:
     return mappoints.size();
   }
 
-  /// @brief all the key frames in the map
-  std::vector<std::shared_ptr<KeyFrame>> keyframes;
-
 private:
   /// @brief all the map points in the map
   std::vector<std::shared_ptr<MapPoint>> mappoints;
 
+  /// @brief all the key frames in the map
+  std::vector<std::shared_ptr<KeyFrame>> keyframes;
+
   /// @brief holds the covisiblity graph
   std::unordered_map<std::shared_ptr<KeyFrame>,
     std::vector<std::shared_ptr<KeyFrame>>> covisibility;
+
+  /// @brief the number of map points in common between two keyframes
+  std::map<std::shared_ptr<KeyFrame>, size_t> covisibility_edge;
 
   /// @brief links two keyframes in the covisibiltiy graph
   /// @param key_frame_1 the first key frame
   /// @param key_frame_2 the second key frame
   void covisibility_insert(
     std::shared_ptr<KeyFrame> key_frame_1,
-    std::shared_ptr<KeyFrame> key_frame_2);
+    std::shared_ptr<KeyFrame> key_frame_2,
+    size_t count);
 };
 
 

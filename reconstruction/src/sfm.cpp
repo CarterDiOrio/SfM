@@ -24,6 +24,8 @@
 #include <ranges>
 #include <time.h>
 
+#include "reconstruction/loop.hpp"
+
 namespace sfm
 {
 Reconstruction::Reconstruction(ReconstructionOptions options)
@@ -279,7 +281,7 @@ std::vector<std::shared_ptr<KeyFrame>> Reconstruction::loop_candidate_detection(
   std::shared_ptr<KeyFrame> key_frame)
 {
   // get neighbors in the covisibility graph
-  const auto neighbors = map.get_neighbors(key_frame);
+  const auto neighbors = map.get_neighbors(key_frame, 30);
 
   // find the minimum score against the neighboring bow vectors
   double min_score = std::numeric_limits<double>::max();
@@ -312,7 +314,7 @@ std::vector<KeyFrameGroup> Reconstruction::loop_candidate_refinment(
 
     for (const auto & [idx, candidate]: std::views::enumerate(candidates)) {
       if (!in_group[idx]) {
-        const auto & candidate_cov = map.get_neighbors(candidate);
+        const auto & candidate_cov = map.get_neighbors(candidate, 30);
         if (group.covisibility.find(candidate) != group.covisibility.end()) {
           // is the candidate in the group directly
           group.expanded = true;
@@ -383,7 +385,7 @@ std::vector<KeyFrameGroup> Reconstruction::loop_candidate_refinment(
       KeyFrameGroup group;
       group.key_frames.insert(candidates[idx]);
       group.covisibility.insert(candidates[idx]);
-      const auto & neighbors = map.get_neighbors(candidates[idx]);
+      const auto & neighbors = map.get_neighbors(candidates[idx], 30);
       group.covisibility.insert(neighbors.begin(), neighbors.end());
       keyframe_groups.push_back(group);
     }
@@ -463,18 +465,29 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
   key_frame->set_world_to_camera(T_kw);
   loop_key_frames.push_back(key_frame);
 
+  std::set<std::shared_ptr<MapPoint>> group_map_points;
+  for (const auto & kf: group.key_frames) {
+    const auto mps = kf->get_map_points();
+    group_map_points.insert(mps.begin(), mps.end());
+    for (const auto & neigh: map.get_neighbors(kf)) {
+      const auto mps = neigh->get_map_points();
+      group_map_points.insert(mps.begin(), mps.end());
+    }
+  }
+
   // project and match map points
   for (const auto & loop_kf: loop_key_frames) {
     const auto in_front_filter = [transform = loop_kf->world_to_camera()](const auto mp) {
         const auto img_p = transform * mp->position().homogeneous();
-        return img_p.z() > 0 && img_p.x() >= 0 && img_p.x() <= 1280 && img_p.y() >= 0 &&
-               img_p.y() <= 720;
+        return img_p.z() > 0 && img_p.x() >= 0 && img_p.x() <= 2000 && img_p.y() >= 0 &&
+               img_p.y() <= 500;
       };
 
-    for (const auto & mp: group.map_points | std::views::filter(in_front_filter)) {
+    size_t count = 0;
+    for (const auto & mp: group_map_points | std::views::filter(in_front_filter)) {
       auto projection = project_map_point(*loop_kf, *mp);
       const auto features = loop_kf->get_features_within_radius(
-        projection.x, projection.y, 3.0,
+        projection.x, projection.y, 8.0,
         true);
 
       if (features.size() > 0) {
@@ -493,7 +506,7 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
 
         const auto kf_mp = loop_kf->corresponding_map_point(min_idx);
         if (kf_mp.has_value()) {
-          if (group.map_points.find(kf_mp.value()) != group.map_points.end()) {
+          if (group_map_points.find(kf_mp.value()) != group_map_points.end()) {
             // we do not want to remove map points from the group because
             // they are the originals and we are currenlty processing them
             // Just unlink the map point from the key frame

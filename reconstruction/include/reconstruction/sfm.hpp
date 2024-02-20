@@ -77,7 +77,7 @@ private:
   PlaceRecognition place_recognition;
 
   /// @brief the number of times a group must be expanded in order to be consistent
-  static constexpr size_t expansion_consistency_threshold = 6;
+  static constexpr size_t expansion_consistency_threshold = 9;
   std::vector<KeyFrameGroup> keyframe_groups;
 
   std::weak_ptr<KeyFrame> previous_keyframe;

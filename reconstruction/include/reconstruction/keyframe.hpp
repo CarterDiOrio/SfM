@@ -83,7 +83,7 @@ public:
   /// @brief Links a map point to a key point in the frame
   /// @param kp_idx the key point index
   /// @param map_point the map point
-  void link_map_point(size_t kp_idx, std::shared_ptr<MapPoint> map_point);
+  bool link_map_point(size_t kp_idx, std::shared_ptr<MapPoint> map_point);
 
   /// @brief returns the map point id corresponding to the keypoint
   /// @param keypoint_idx the keypoint index

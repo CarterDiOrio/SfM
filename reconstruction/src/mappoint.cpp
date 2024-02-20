@@ -31,7 +31,6 @@ void MapPoint::add_keyframe(std::weak_ptr<KeyFrame> keyframe)
   for (const auto & kf: keyframes) {
     auto shared_kf = kf.lock();
     auto descriptor = shared_kf->get_descriptor(shared_from_this());
-
     descriptors.push_back(descriptor.value());
     positions.push_back(shared_kf->get_observed_location_3d(shared_from_this()));
   }

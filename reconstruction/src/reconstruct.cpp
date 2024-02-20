@@ -25,7 +25,7 @@ int main()
   auto frames = reader.read_frames();
   for (size_t i = 0; frames.has_value(); i++) {
     const auto & [c, d] = frames.value();
-    if (i % 3 == 0) {
+    if (i % 2 == 0) {
       reconstruction.add_frame_ordered(c, d);
       if (cv::waitKey(1) == 'q') {
         break;
