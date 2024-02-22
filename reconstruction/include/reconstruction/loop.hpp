@@ -35,16 +35,18 @@ public:
     Eigen::Map<const Eigen::Matrix<T, 6, 1>> a_se3(a_se3_vec);
     Eigen::Map<const Eigen::Matrix<T, 6, 1>> b_se3(b_se3_vec);
 
-    Eigen::Matrix<T, 4, 4> T_a = Sophus::SE3<T>::exp(a_se3).matrix();
-    Eigen::Matrix<T, 4, 4> T_b = Sophus::SE3<T>::exp(b_se3).matrix();
+    Sophus::SE3<T> T_a = Sophus::SE3<T>::exp(a_se3);
+    Sophus::SE3<T> T_b = Sophus::SE3<T>::exp(b_se3);
 
-    Eigen::Matrix<T, 4, 4> T_id = T_ab_measured.template cast<T>() * T_b * T_a.inverse();
-    Eigen::Vector<T, 6> e_ab = Sophus::SE3<T>{T_id}.log();
+    Sophus::SE3<T> T_id =
+      Sophus::SE3<T>{T_ab_measured.template cast<T>()} *T_b * Sophus::SE3<T>{T_a}.inverse();
+    Eigen::Vector<T, 6> e_ab = T_id.log();
 
-    T cost = e_ab.transpose() * Eigen::Matrix<T, 6, 6>::Identity() * e_ab;
+    // T cost = e_ab.transpose() * Eigen::Matrix<T, 6, 6>::Identity() * e_ab;
 
     // map residuals
-    residuals_ptr[0] = cost;
+    Eigen::Map<Eigen::Matrix<T, 6, 1>> residuals(residuals_ptr);
+    residuals = e_ab;
 
     return true;
   }
@@ -52,7 +54,7 @@ public:
   static ceres::CostFunction * Create(
     const Eigen::Matrix4d T_ab_measured)
   {
-    return new ceres::AutoDiffCostFunction<PoseGraph3dErrorTerm, 1, 6, 6>(
+    return new ceres::AutoDiffCostFunction<PoseGraph3dErrorTerm, 6, 6, 6>(
       new PoseGraph3dErrorTerm(T_ab_measured));
   }
 

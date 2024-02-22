@@ -107,8 +107,7 @@ void Map::covisibility_insert(
     return;
   }
 
-  covisibility_edge[key_frame_1] = count;
-  covisibility_edge[key_frame_2] = count;
+  insert_edge(key_frame_1, key_frame_2, count);
   covisibility[key_frame_1].push_back(key_frame_2);
   covisibility[key_frame_2].push_back(key_frame_1);
 }
@@ -164,8 +163,8 @@ std::vector<std::shared_ptr<KeyFrame>> Map::get_neighbors(
   std::shared_ptr<KeyFrame> key_frame, size_t min_shared_features)
 {
   auto kfs = covisibility[key_frame] | std::views::filter(
-    [min_shared_features, & edges = covisibility_edge](const auto & kf) {
-      return edges[kf] > min_shared_features;
+    [&key_frame, min_shared_features, & edges = covisibility_edge, this](const auto & kf) {
+      return this->get_edge(key_frame, kf) > min_shared_features;
     });
   return {kfs.begin(), kfs.end()};
 }
@@ -303,6 +302,28 @@ void Map::local_bundle_adjustment(std::shared_ptr<KeyFrame> key_frame, PinholeMo
   }
 }
 
+size_t Map::get_edge(
+  std::shared_ptr<KeyFrame> key_frame_1,
+  std::shared_ptr<KeyFrame> key_frame_2)
+{
+  if (key_frame_1 < key_frame_2) {
+    return covisibility_edge[{key_frame_1, key_frame_2}];
+  } else {
+    return covisibility_edge[{key_frame_2, key_frame_1}];
+  }
+}
+
+void Map::insert_edge(
+  std::shared_ptr<KeyFrame> key_frame_1,
+  std::shared_ptr<KeyFrame> key_frame_2,
+  size_t count)
+{
+  if (key_frame_1 < key_frame_2) {
+    covisibility_edge[{key_frame_1, key_frame_2}] = count;
+  } else {
+    covisibility_edge[{key_frame_2, key_frame_1}] = count;
+  }
+}
 
 std::ostream & operator<<(std::ostream & os, const Map & map)
 {

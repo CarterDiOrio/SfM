@@ -121,17 +121,26 @@ public:
   /// @brief all the key frames in the map
   std::vector<std::shared_ptr<KeyFrame>> keyframes;
 
-private:
+  /// @brief the number of map points in common between two keyframes
+  std::map<std::pair<KeyFramePtr, KeyFramePtr>, size_t> covisibility_edge;
+
   /// @brief all the map points in the map
   std::vector<std::shared_ptr<MapPoint>> mappoints;
 
-
+private:
   /// @brief holds the covisiblity graph
   std::unordered_map<std::shared_ptr<KeyFrame>,
     std::vector<std::shared_ptr<KeyFrame>>> covisibility;
 
-  /// @brief the number of map points in common between two keyframes
-  std::map<std::shared_ptr<KeyFrame>, size_t> covisibility_edge;
+
+  size_t get_edge(
+    std::shared_ptr<KeyFrame> key_frame_1,
+    std::shared_ptr<KeyFrame> key_frame_2);
+
+  void insert_edge(
+    std::shared_ptr<KeyFrame> key_frame_1,
+    std::shared_ptr<KeyFrame> key_frame_2,
+    size_t count);
 
   /// @brief links two keyframes in the covisibiltiy graph
   /// @param key_frame_1 the first key frame

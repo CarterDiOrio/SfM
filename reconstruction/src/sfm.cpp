@@ -25,6 +25,7 @@
 #include "reconstruction/place_recognition.hpp"
 #include "reconstruction/utils.hpp"
 
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -37,7 +38,7 @@ namespace sfm
 {
 Reconstruction::Reconstruction(ReconstructionOptions options)
 : matcher{cv::BFMatcher::create(cv::NORM_HAMMING, true)},
-  detector{cv::ORB::create(2000)},
+  detector{cv::ORB::create(3000)},
   model{options.model},
   options{options},
   place_recognition(options.place_recognition_voc)
@@ -453,22 +454,11 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
 {
   std::cout << "loop closure" << std::endl;
   auto loop_key_frames = map.get_neighbors(key_frame);
-  const Eigen::Matrix4d T_kw = group.T_wk.inverse();
 
   // the loop closed transform propogated to each of the key frames neighbors
-  std::unordered_map<KeyFramePtr, Eigen::Matrix4d> original_transforms;
-  original_transforms[key_frame] = key_frame->world_to_camera();
-
-  for (auto & neighbor: loop_key_frames) {
-    // We want T_kn_w = T_kn_k  * T_kw
-    // T_kn_k = T_kn_w * T_wk
-    original_transforms[neighbor] = neighbor->world_to_camera();
-    Eigen::Matrix4d T_kn_k = neighbor->world_to_camera() * key_frame->transform();
-    Eigen::Matrix4d T_kn_w = T_kn_k * T_kw;
-    neighbor->set_world_to_camera(T_kn_w);
-  }
-  key_frame->set_world_to_camera(T_kw);
-  loop_key_frames.push_back(key_frame);
+  Eigen::Matrix4d original_transform = key_frame->world_to_camera();
+  Eigen::Matrix4d corrected_transform = group.T_wk.inverse();
+  key_frame->set_world_to_camera(corrected_transform);
 
   std::set<std::shared_ptr<MapPoint>> group_map_points;
   for (const auto & kf: group.key_frames) {
@@ -480,75 +470,71 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
     }
   }
 
-  std::unordered_map<KeyFramePtr, std::pair<KeyFramePtr, Eigen::Matrix4d>> loop_edges;
 
   // project and match map points
-  for (const auto & loop_kf: loop_key_frames) {
-    const auto in_front_filter = [transform = loop_kf->world_to_camera()](const auto mp) {
-        const auto img_p = transform * mp->position().homogeneous();
-        return img_p.z() > 0 && img_p.x() >= 0 && img_p.x() <= 2000 && img_p.y() >= 0 &&
-               img_p.y() <= 500;
-      };
+  const auto in_front_filter = [transform = key_frame->world_to_camera()](const auto mp) {
+      const auto img_p = transform * mp->position().homogeneous();
+      return img_p.z() > 0 && img_p.x() >= 0 && img_p.x() <= 2000 && img_p.y() >= 0 &&
+             img_p.y() <= 500;
+    };
 
-    for (const auto & mp: group_map_points | std::views::filter(in_front_filter)) {
-      auto projection = project_map_point(*loop_kf, *mp);
-      const auto features = loop_kf->get_features_within_radius(
-        projection.x,
-        projection.y,
-        8.0,
-        true);
+  for (const auto & mp: group_map_points | std::views::filter(in_front_filter)) {
+    auto projection = project_map_point(*key_frame, *mp);
+    const auto features = key_frame->get_features_within_radius(
+      projection.x,
+      projection.y,
+      8.0,
+      true);
 
-      if (features.size() > 0) {
-        const auto mp_desc = mp->description();
+    if (features.size() > 0) {
+      const auto mp_desc = mp->description();
 
-        // find the minimum descriptor distance
-        auto min_idx = *std::min_element(
-          features.begin(), features.end(),
-          [&mp_desc, &loop_kf](const auto & idx1, const auto & idx2) {
-            return cv::norm(mp_desc, loop_kf->get_point(idx1).second, cv::NORM_HAMMING) <
-            cv::norm(mp_desc, loop_kf->get_point(idx2).second, cv::NORM_HAMMING);
-          });
+      // find the minimum descriptor distance
+      auto min_idx = *std::min_element(
+        features.begin(), features.end(),
+        [&mp_desc, &key_frame](const auto & idx1, const auto & idx2) {
+          return cv::norm(mp_desc, key_frame->get_point(idx1).second, cv::NORM_HAMMING) <
+          cv::norm(mp_desc, key_frame->get_point(idx2).second, cv::NORM_HAMMING);
+        });
 
-        const auto kf_mp = loop_kf->corresponding_map_point(min_idx);
-        if (kf_mp.has_value()) {
-          if (group_map_points.find(kf_mp.value()) != group_map_points.end()) {
-            // we do not want to remove map points from the group because
-            // they are the originals and we are currenlty processing them
-            // Just unlink the map point from the key frame
-            loop_kf->remove_map_point(kf_mp.value());
-            kf_mp.value()->remove_keyframe(loop_kf);
-          } else {
-            // map point is not in the group and matches in the group, needs
-            // to be merged. Remove and link.
-            map.remove_map_point(kf_mp.value());
-          }
+      const auto kf_mp = key_frame->corresponding_map_point(min_idx);
+      if (kf_mp.has_value()) {
+        if (group_map_points.find(kf_mp.value()) != group_map_points.end()) {
+          // we do not want to remove map points from the group because
+          // they are the originals and we are currenlty processing them
+          // Just unlink the map point from the key frame
+          key_frame->remove_map_point(kf_mp.value());
+          kf_mp.value()->remove_keyframe(key_frame);
+        } else {
+          // map point is not in the group and matches in the group, needs
+          // to be merged. Remove and link.
+          key_frame->remove_map_point(kf_mp.value());
+          kf_mp.value()->remove_keyframe(key_frame);
         }
-
-        map.link_keyframe_to_map_point(loop_kf, min_idx, mp);
       }
-    }
 
-    // add edges in the covisibility graph
-    const auto neighbors_before = map.get_neighbors(loop_kf);
-    map.update_covisibility(loop_kf);
-    const auto neighbors_after = map.get_neighbors(loop_kf);
-
-    // identify new loop edges
-    for (const auto & new_neighbor: neighbors_after) {
-      if (std::find(neighbors_before.begin(), neighbors_before.end(), new_neighbor) ==
-        neighbors_before.end())
-      {
-        loop_edges[loop_kf] =
-        {new_neighbor, loop_kf->world_to_camera() * new_neighbor->transform()};
-      }
+      map.link_keyframe_to_map_point(key_frame, min_idx, mp);
     }
   }
 
-  //revert to original transforms
-  for (auto & [kf, transform]: original_transforms) {
-    kf->set_world_to_camera(transform);
-  }
+  // add edges in the covisibility graph
+  const auto neighbors_before = map.get_neighbors(key_frame);
+  map.update_covisibility(key_frame);
+  const auto neighbors_after = map.get_neighbors(key_frame);
 
+  std::vector<std::pair<KeyFramePtr, Eigen::Matrix4d>> loop_edges;
+  std::unordered_set<KeyFramePtr> loop_edge_kfs;
+
+  // identify new loop edges
+  for (const auto & new_neighbor: neighbors_after) {
+    if (std::find(neighbors_before.begin(), neighbors_before.end(), new_neighbor) ==
+      neighbors_before.end())
+    {
+      loop_edges.push_back(
+        {new_neighbor, key_frame->world_to_camera() * new_neighbor->transform()});
+      loop_edge_kfs.insert(new_neighbor);
+    }
+  }
 
   // create se3 representations for each frame
   std::unordered_map<KeyFramePtr, Eigen::Vector<double, 6>> kf_poses;
@@ -563,9 +549,8 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
   ceres::LossFunction * loss_function = nullptr;
 
   // add loop edges to the problem
-  for (const auto & [kf_a, pair]: loop_edges) {
-    const auto & [kf_b, T_ab] = pair;
-    auto & a_se3_vec = kf_poses[kf_a];
+  for (const auto & [kf_b, T_ab]: loop_edges) {
+    auto & a_se3_vec = kf_poses[key_frame];
     auto & b_se3_vec = kf_poses[kf_b];
     ceres::CostFunction * cost_function = PoseGraph3dErrorTerm::Create(T_ab);
     problem.AddResidualBlock(
@@ -575,23 +560,26 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
 
   // get all normal edges to the problem
   std::vector<std::pair<KeyFramePtr, KeyFramePtr>> normal_edges;
-  for (const auto & kf: map.get_key_frames()) {
-    for (const auto & nkf: map.get_neighbors(kf)) {
-      if (std::find(normal_edges.begin(), normal_edges.end(), std::make_pair(kf, nkf)) ==
-        normal_edges.end() &&
-        std::find(normal_edges.begin(), normal_edges.end(), std::make_pair(nkf, kf)) ==
-        normal_edges.end())
+  for (const auto [pair, count]: map.covisibility_edge) {
+    if (count >= 100) {
+      if (pair.first != key_frame && pair.second != key_frame) {
+        //neither are loop key frame, can't be a loop edge
+        normal_edges.push_back(pair);
+      } else if (pair.first == key_frame &&
+        loop_edge_kfs.find(pair.second) == loop_edge_kfs.end())
       {
-        // make sure its not a loop edge
-        if (!((loop_edges.find(kf) != loop_edges.end() &&
-          loop_edges[kf].first == nkf) ||
-          (loop_edges.find(nkf) != loop_edges.end() && loop_edges[nkf].first == kf)))
-        {
-          normal_edges.push_back(std::make_pair(kf, nkf));
-        }
+        // kf is the key frame and nkf is not a loop edge
+        normal_edges.push_back(pair);
+      } else if (pair.second == key_frame &&
+        loop_edge_kfs.find(pair.first) == loop_edge_kfs.end())
+      {
+        // nkf is the key frame and kf is not a loop edge
+        normal_edges.push_back(pair);
       }
     }
   }
+
+  std::cout << "normal edges: " << normal_edges.size() << std::endl;
 
 
   // add normal edges to the problem
@@ -599,23 +587,38 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
     auto & a_pose = kf_poses[kf_a];
     auto & b_pose = kf_poses[kf_b];
 
+    Eigen::Matrix4d T_ab;
+    if (kf_a == key_frame) {
+      T_ab = original_transform * kf_b->transform();
+    } else if (kf_b == key_frame) {
+      T_ab = kf_a->world_to_camera() * Sophus::SE3<double>{original_transform}.inverse().matrix();
+    } else {
+      T_ab = kf_a->world_to_camera() * kf_b->transform();
+    }
+
     ceres::CostFunction * cost_function = PoseGraph3dErrorTerm::Create(
-      kf_a->world_to_camera() * kf_b->transform());
+      T_ab);
     problem.AddResidualBlock(
       cost_function, loss_function,
       a_pose.data(), b_pose.data());
   }
 
-  // set one pose as constant to avoid gauge freedom issues
-  const auto & se3_vec = kf_poses[map.get_key_frames()[0]];
+  // set the loop key frame as constant
+  const auto & se3_vec = kf_poses[key_frame];
   problem.SetParameterBlockConstant(se3_vec.data());
+
+  // also lock the original key frame
+  const auto & original_se3_vec = kf_poses[map.keyframes[0]];
+  problem.SetParameterBlockConstant(original_se3_vec.data());
 
   ceres::Solver::Options options;
   options.sparse_linear_algebra_library_type = ceres::SUITE_SPARSE;
   options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY;
   options.minimizer_progress_to_stdout = true;
+  options.trust_region_strategy_type = ceres::DOGLEG;
+  options.dogleg_type = ceres::SUBSPACE_DOGLEG;
   ceres::Solver::Summary summary;
-  options.max_num_iterations = 200;
+  options.max_num_iterations = 50;
   ceres::Solve(options, &problem, &summary);
   // std::cout << summary.FullReport() << std::endl;
 
@@ -624,7 +627,16 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
     kf->set_world_to_camera(tf);
   }
 
+  // update all the map points
+  for (const auto & mp: map.mappoints) {
+    try {
+      mp->update_position();
+    } catch (std::out_of_range & e) {
+      // std::cout << e.what() << std::endl;
+    }
+  }
 
+  std::cout << "loop closed" << std::endl;
   // clear key frame groups
   keyframe_groups.clear();
 }
