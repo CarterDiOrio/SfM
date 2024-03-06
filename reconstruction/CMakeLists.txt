@@ -34,7 +34,8 @@ add_executable(reconstruct
                 src/recording.cpp
                 src/pinhole.cpp
                 src/sfm.cpp
-                src/place_recognition.cpp)
+                src/place_recognition.cpp
+                src/dense_reconstruction.cpp)
 
 add_executable(build_vocab src/build_vocabulary.cpp
                            src/recording.cpp)
@@ -47,7 +48,8 @@ add_library(reconstruction src/reconstruct.cpp
                             src/recording.cpp
                             src/pinhole.cpp
                             src/sfm.cpp
-                            src/place_recognition.cpp)
+                            src/place_recognition.cpp
+                            src/dense_reconstruction.cpp)
 
 # Enable c++17 support.
 # Public causes the features to propagate to anything

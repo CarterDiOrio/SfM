@@ -28,6 +28,16 @@ KeyFrame::KeyFrame(
   deprojected_points = deproject_keypoints(keypoints, depth, model);
 }
 
+cv::Mat KeyFrame::get_depth_image() const
+{
+  return depth_img;
+}
+
+cv::Mat KeyFrame::get_img() const
+{
+  return img;
+}
+
 PinholeModel KeyFrame::camera_calibration() const
 {
   return K;
@@ -99,11 +109,11 @@ std::vector<cv::DMatch> KeyFrame::match(
 bool KeyFrame::link_map_point(size_t kp_idx, std::shared_ptr<MapPoint> map_point)
 {
   if (kp_to_mp_index.find(kp_idx) != kp_to_mp_index.end()) {
-    // std::cout << "DUPLICATES KP IDX\n";
+    std::cout << "DUPLICATES KP IDX\n";
   }
 
   if (mp_to_kp_index.find(map_point) != mp_to_kp_index.end()) {
-    // std::cout << "DUPLICATES MP\n";
+    std::cout << "DUPLICATES MP\n";
     return false;
   }
 
@@ -189,7 +199,7 @@ std::pair<double,
 {
   const auto idx = mp_to_kp_index.at(map_point);
   const auto & kp = keypoints[idx];
-  return {kp.pt.x, kp.pt.y};
+  return {static_cast<int>(kp.pt.x), static_cast<int>(kp.pt.y)};
 }
 
 Eigen::Vector3d KeyFrame::get_observed_location_3d(const std::shared_ptr<MapPoint> map_point) const
@@ -222,4 +232,65 @@ double keyframe_reprojection_error(
   return std::sqrt((x - point.x) * (x - point.x) + (y - point.y) * (y - point.y));
 }
 
+bool KeyFrame::point_in_frame(const MapPoint & point) const
+{
+  const auto p = project_pixel_to_point(
+    K, T_kw, point.position());
+
+  // is within image bounds
+  if (p.x < 0 || p.x > img.cols) {
+    return false;
+  }
+
+  if (p.y < 0 || p.y > img.rows) {
+    return false;
+  }
+
+  // is in front of the camera
+  const auto camera_point = T_kw * point.position().homogeneous();
+  if (camera_point.z() < 0) {
+    return false;
+  }
+
+  // get the mean viewing ray of the point
+  Eigen::Vector3d mean_ray = Eigen::Vector3d::Zero();
+  for (const auto & kf: point.get_keyframes()) {
+    const auto shared_kf = kf.lock();
+    const Eigen::Vector3d vec =
+      (shared_kf->world_to_camera() * point.position().homogeneous()).head<3>().normalized();
+    mean_ray += vec;
+  }
+  mean_ray /= point.get_keyframes().size();
+  mean_ray.normalize();
+
+  Eigen::Vector3d ray = (T_kw * point.position().homogeneous()).head<3>().normalized();
+
+  if (mean_ray.dot(ray) < std::cos(1.0472)) {
+    std::cout << "BAD RAY" << std::endl;
+    return false;
+  }
+
+  return true;
+}
+
+std::optional<cv::Point2i> KeyFrame::point_in_frame(const Eigen::Vector3d & point) const
+{
+  auto p = project_pixel_to_point(K, T_kw, point);
+
+  // is within image bounds
+  if (p.x < 0 || p.x >= img.cols || p.y < 0 || p.y >= img.rows) {
+    return {};
+  }
+
+  // is in front of the camera
+  const auto camera_point = T_kw * point.homogeneous();
+  if (camera_point.z() < 0) {
+    return {};
+  }
+
+  return cv::Point2i{
+    static_cast<int>(std::floor(p.x)),
+    static_cast<int>(std::floor(p.y))
+  };
+}
 }

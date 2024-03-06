@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 #include "keyframe.fwd.hpp"
+#include "reconstruction/keyframe.hpp"
 #include "reconstruction/map.hpp"
 
 namespace sfm
@@ -47,10 +48,15 @@ public:
   /// @return the score
   double score(const KeyFrame & key_frame, const KeyFrame & other) const;
 
+  /// @brief Forbids a keyframe from being matched
+  /// @param key_frame the keyframe to forbid
+  void forbid(std::shared_ptr<KeyFrame> key_frame);
+
 private:
   OrbDatabase database;
 
   std::unordered_map<size_t, std::shared_ptr<KeyFrame>> entry_key_frame_map;
+  std::unordered_map<std::shared_ptr<KeyFrame>, size_t> key_frame_entry_map;
 
   struct QueryQroup
   {

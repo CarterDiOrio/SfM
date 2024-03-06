@@ -136,6 +136,20 @@ public:
   /// @param map_point the map point to remove
   void remove_map_point(const std::shared_ptr<MapPoint> map_point);
 
+  /// @brief checks if a point is in the frame
+  /// @param key_frame the key frame to check
+  /// @return true if the point is in the frame
+  bool point_in_frame(const MapPoint & point) const;
+
+  /// @brief checks if a point is in the frame
+  /// @param point the point to check
+  /// @return true if the point is in the frame
+  std::optional<cv::Point2i> point_in_frame(const Eigen::Vector3d & point) const;
+
+  cv::Mat get_depth_image() const;
+
+  cv::Mat get_img() const;
+
   const cv::Mat img;
 
 private:

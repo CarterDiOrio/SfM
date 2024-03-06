@@ -23,6 +23,7 @@ std::pair<std::vector<cv::Point2f>, std::vector<cv::Point2f>> packMatches(
         pts1.push_back(queryPoints[match.queryIdx].pt);
         pts2.push_back(trainingPoints[match.trainIdx].pt);
     }
+
     return { pts1, pts2 };
 }
 

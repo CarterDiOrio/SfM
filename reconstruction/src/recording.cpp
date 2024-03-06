@@ -6,8 +6,8 @@
 
 namespace sfm::utils
 {
-RecordingReader::RecordingReader(const std::string & directory)
-: directory{directory} {}
+RecordingReader::RecordingReader(const std::string & directory, size_t start_frame)
+: directory{directory}, frame_counter{start_frame} {}
 
 std::optional<std::pair<cv::Mat, cv::Mat>> RecordingReader::read_frames()
 {

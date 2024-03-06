@@ -8,10 +8,12 @@
 
 #include "reconstruction/keyframe.hpp"
 #include "reconstruction/mappoint.fwd.hpp"
+#include "reconstruction/mappoint.hpp"
 #include "reconstruction/pinhole.hpp"
 
 #include <iosfwd>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace sfm
 {
@@ -81,6 +83,11 @@ public:
     size_t key_point_idx,
     std::shared_ptr<MapPoint> map_point);
 
+  /// @brief unlinks a map point from the key frame
+  /// @param key_frame the key frame to unlink from
+  /// @param mp the map point to unlink
+  void unlink_kf_and_mp(std::shared_ptr<KeyFrame> key_frame, std::shared_ptr<MapPoint> mp);
+
   /// @brief Adds the key frame to the covisibility graph
   /// @param key_frame the key frame to link
   void update_covisibility(std::shared_ptr<KeyFrame> key_frame);
@@ -90,7 +97,7 @@ public:
   /// @param distance how many levels of neighbors to include
   /// @return a vector of key_frame_sets where each element represents
   /// a set of nodes that have 1 higher distance than the last
-  std::vector<key_frame_set_t> get_local_map(
+  std::unordered_set<KeyFramePtr> get_local_map(
     std::shared_ptr<KeyFrame> key_frame,
     size_t distance,
     size_t min_shared_features = covisibility_minimum);
@@ -104,20 +111,31 @@ public:
   /// @brief removes a map point from the map
   void remove_map_point(std::shared_ptr<MapPoint> map_point);
 
+  /// @brief removes a key frame from the map
+  void remove_key_frame(std::shared_ptr<KeyFrame> key_frame);
+
   /// @brief performs bundle adjustment on the local map around a keyframe
   /// @param key_frame the key frame to perform bundle adjustment around
-  void local_bundle_adjustment(
-    std::shared_ptr<KeyFrame> key_frame, PinholeModel model);
+  void local_bundle_adjustment(PinholeModel model);
 
   /// @brief gets all the key frames in the map
   std::vector<KeyFramePtr> get_key_frames();
 
-  friend std::ostream & operator<<(std::ostream & os, const Map & map);
+  /// @brief checks if the key frame is redundant
+  /// @param key_frame the key frame to check
+  /// @param threshold The uniqueness threshold
+  /// @return true if the key frame is redundant
+  bool check_keyframe_redundancy(
+    std::shared_ptr<KeyFrame> key_frame,
+    double threshold = 0.60);
 
   inline size_t size()
   {
     return mappoints.size();
   }
+
+  friend std::ostream & operator<<(std::ostream & os, const Map & map);
+
   /// @brief all the key frames in the map
   std::vector<std::shared_ptr<KeyFrame>> keyframes;
 
@@ -132,6 +150,9 @@ private:
   std::unordered_map<std::shared_ptr<KeyFrame>,
     std::vector<std::shared_ptr<KeyFrame>>> covisibility;
 
+  std::pair<KeyFramePtr, KeyFramePtr> edge_order(
+    std::shared_ptr<KeyFrame> key_frame_1,
+    std::shared_ptr<KeyFrame> key_frame_2);
 
   size_t get_edge(
     std::shared_ptr<KeyFrame> key_frame_1,

@@ -2,10 +2,11 @@
 #define BUNDLE_ADJUST_HPP_GUARD_
 
 #include "ceres/ceres.h"
-#include "ceres/rotation.h"
 #include "reconstruction/pinhole.hpp"
+#include <Eigen/Dense>
 #include <ceres/autodiff_cost_function.h>
 #include <ceres/cost_function.h>
+#include <sophus/se3.hpp>
 
 
 namespace sfm
@@ -26,20 +27,26 @@ struct ReprojectionError
     const T * const camera_params,
     const T * const point, T * residuals) const
   {
-    T p[3];
-    ceres::AngleAxisRotatePoint(camera_params, point, p);
-    p[0] += camera_params[3];
-    p[1] += camera_params[4];
-    p[2] += camera_params[5];
+    Eigen::Vector<T, 6> se3{
+      camera_params[0], camera_params[1], camera_params[2],
+      camera_params[3], camera_params[4], camera_params[5]
+    };
+    Eigen::Vector<T, 3> p{
+      point[0], point[1], point[2]
+    };
 
-    const auto projected_x = (p[0] / p[2]) * model.fx + model.cx;
-    const auto projected_y = (p[1] / p[2]) * model.fy + model.cy;
+    Sophus::SE3<T> T_kw = Sophus::SE3<T>::exp(se3);
+    Eigen::Vector<T, 3> point_k = (T_kw * p.homogeneous()).template head<3>();
 
-    residuals[0] = observed_x - projected_x;
-    residuals[1] = observed_y - projected_y;
+    T x = point_k(0);
+    T y = point_k(1);
+    T z = point_k(2);
 
-    // const auto mag = sqrt(residuals[0] * residuals[0] + residuals[1] * residuals[1]);
+    const auto projected_x = (x / z) * model.fx + model.cx;
+    const auto projected_y = (y / z) * model.fy + model.cy;
 
+    residuals[0] = projected_x - T{observed_x};
+    residuals[1] = projected_y - T{observed_y};
 
     return true;
   }

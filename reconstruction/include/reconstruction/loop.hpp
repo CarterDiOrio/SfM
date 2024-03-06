@@ -42,8 +42,6 @@ public:
       Sophus::SE3<T>{T_ab_measured.template cast<T>()} *T_b * Sophus::SE3<T>{T_a}.inverse();
     Eigen::Vector<T, 6> e_ab = T_id.log();
 
-    // T cost = e_ab.transpose() * Eigen::Matrix<T, 6, 6>::Identity() * e_ab;
-
     // map residuals
     Eigen::Map<Eigen::Matrix<T, 6, 1>> residuals(residuals_ptr);
     residuals = e_ab;

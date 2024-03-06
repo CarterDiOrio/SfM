@@ -1,10 +1,12 @@
 #include "reconstruction/map.hpp"
 
+#include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Geometry/AngleAxis.h>
 #include <algorithm>
 #include <ceres/loss_function.h>
 #include <ceres/problem.h>
 #include <ceres/types.h>
+#include <cmath>
 #include <opencv2/core.hpp>
 #include <memory>
 #include <iostream>
@@ -18,6 +20,7 @@
 #include "reconstruction/keyframe.hpp"
 #include "reconstruction/bundle_adjust.hpp"
 #include "reconstruction/pinhole.hpp"
+#include <sophus/se3.hpp>
 
 namespace sfm
 {
@@ -66,6 +69,17 @@ void Map::link_keyframe_to_map_point(
   }
 }
 
+void Map::unlink_kf_and_mp(std::shared_ptr<KeyFrame> key_frame, std::shared_ptr<MapPoint> mp)
+{
+  key_frame->remove_map_point(mp);
+  mp->remove_keyframe(key_frame);
+
+  // if no more key frames reference the map point remove the map point
+  if (mp->get_keyframes().size() == 0) {
+    remove_map_point(mp);
+  }
+}
+
 void Map::update_covisibility(std::shared_ptr<KeyFrame> key_frame)
 {
   std::unordered_map<std::shared_ptr<KeyFrame>, size_t> key_frame_count;
@@ -96,67 +110,43 @@ void Map::covisibility_insert(
   std::shared_ptr<KeyFrame> key_frame_2,
   size_t count)
 {
-  if (count < covisibility_minimum) {
-    return;
-  }
-
   // check if the key frames are already in the graph
-  if (std::find(covisibility[key_frame_1].begin(), covisibility[key_frame_1].end(), key_frame_2) !=
-    covisibility[key_frame_1].end())
-  {
+  if (covisibility_edge.find(edge_order(key_frame_1, key_frame_2)) != covisibility_edge.end()) {
     return;
   }
 
   insert_edge(key_frame_1, key_frame_2, count);
-  covisibility[key_frame_1].push_back(key_frame_2);
-  covisibility[key_frame_2].push_back(key_frame_1);
 }
 
-std::vector<key_frame_set_t> Map::get_local_map(
+std::unordered_set<KeyFramePtr> Map::get_local_map(
   std::shared_ptr<KeyFrame> key_frame,
   size_t distance,
   size_t min_shared_features
 )
 {
-  std::vector<key_frame_set_t> sets;
-  std::vector<std::shared_ptr<KeyFrame>> visited;
+  std::unordered_set<KeyFramePtr> local_map;
 
-  auto vec = get_neighbors(key_frame, min_shared_features);
-  std::deque<std::shared_ptr<KeyFrame>> key_frame_queue{vec.begin(), vec.end()};
-  sets.push_back({vec.begin(), vec.end()});
+  size_t current_distance = 1;
+  std::deque<KeyFramePtr> queue;
+  queue.push_back(key_frame);
+  while (!queue.empty() && current_distance <= distance) {
 
-  // filter key frames for not in queue
-  const auto visited_filter = [&visited](auto kf) {
-      return std::find(
-        visited.begin(),
-        visited.end(),
-        kf
-      ) == visited.end();
-    };
-
-  for (size_t d = 1; d < distance; d++) {
-
-    //get length of all nodes in layer
-    size_t layer_size = key_frame_queue.size();
-
-    // process all nodes at current layer
+    size_t layer_size = queue.size();
     for (size_t i = 0; i < layer_size; i++) {
-      const auto current = key_frame_queue.front();
-
-      // get the nodes that haven't been visited
-      for (auto kf:
-        get_neighbors(current, min_shared_features) | std::views::filter(visited_filter))
-      {
-        visited.push_back(kf);
-        key_frame_queue.push_back(kf);
+      const auto current_key_frame = queue.front();
+      const auto neighbors = get_neighbors(current_key_frame, 1);
+      for (const auto kf: neighbors) {
+        if (local_map.find(kf) == local_map.end()) {
+          local_map.insert(kf);
+          queue.push_back(kf);
+        }
       }
-      key_frame_queue.pop_front();
     }
 
-    sets.push_back({key_frame_queue.begin(), key_frame_queue.end()});
+    current_distance++;
   }
 
-  return sets;
+  return local_map;
 }
 
 std::vector<std::shared_ptr<KeyFrame>> Map::get_neighbors(
@@ -185,132 +175,170 @@ std::vector<KeyFramePtr> Map::get_key_frames()
   return keyframes;
 }
 
-void Map::local_bundle_adjustment(std::shared_ptr<KeyFrame> key_frame, PinholeModel model)
+bool Map::check_keyframe_redundancy(
+  std::shared_ptr<KeyFrame> key_frame,
+  double threshold)
 {
-  // get the key frames connected to the current key frame directly
-  std::vector key_frames = {key_frame};
-  for (const auto kf: covisibility[key_frame]) {
-    key_frames.push_back(kf);
-  }
+  const auto map_points = key_frame->get_map_points();
+  size_t count = 0;
 
-  // get all the map points in the local map
-  auto map_points = key_frames | std::views::transform(
-    [](auto & kf) {
-      return kf->get_map_points();
-    }) | std::views::join;
-
-  // restrict it to map points that are only seen by at least 2 views
-  std::unordered_map<std::shared_ptr<MapPoint>, size_t> mp_count;
   for (const auto mp: map_points) {
-    if (mp_count.find(mp) == mp_count.end()) {
-      mp_count[mp] = 1;
-    } else {
-      mp_count[mp]++;
-    }
-  }
 
-  std::unordered_set<std::shared_ptr<MapPoint>> mp_in_opt;
-  for (const auto [mp, count]: mp_count) {
-    if (count > 1) {
-      mp_in_opt.insert(mp);
-    }
-  }
+    // check if the map point has been seen by 3 other frames at the same or
+    // finer scale
+    if (mp->get_keyframes().size() > 1) {
 
-  // find the key frames that are connected to map points but are not
-  // connected to the key frame in the covisibility graph
-  std::unordered_set<std::shared_ptr<KeyFrame>> second_key_frames;
-  for (const auto mp: mp_in_opt) {
-    for (const auto kf: *mp) {
-      if (std::find(key_frames.begin(), key_frames.end(), kf.lock()) == key_frames.end()) {
-        second_key_frames.insert(kf.lock());
-        key_frames.push_back(kf.lock());
+      // reference distance
+      const auto ref_dist = (key_frame->world_to_camera() * mp->position().homogeneous()).norm();
+
+      size_t scale_count = 0;
+      for (const auto kf: mp->get_keyframes()) {
+        if (kf.lock() != key_frame) {
+          // get distance to map point from kf
+          const auto dist = (kf.lock()->world_to_camera() * mp->position().homogeneous()).norm();
+
+          // get distance between the two keyframes
+          const auto dist_kf = (kf.lock()->world_to_camera().block<3, 1>(0, 3) -
+            key_frame->world_to_camera().block<3, 1>(0, 3)).norm();
+
+          if (dist <= ref_dist && dist_kf <= 100) {
+            scale_count++;
+          }
+        }
+      }
+
+      if (scale_count >= 1) {
+        count++;
       }
     }
   }
 
+  const auto ratio = static_cast<double>(count) / map_points.size();
+  return ratio >= threshold;
+}
 
-  // create axis angle representation of each keyframe rotation
-  std::vector<std::array<double, 6>> camera_params;
-  for (const auto kf: key_frames) {
-    Eigen::AngleAxisd aa(kf->world_to_camera().block<3, 3>(0, 0));
-    const auto rot = aa.axis() * aa.angle();
-    camera_params.push_back(
-      {
-        rot[0],
-        rot[1],
-        rot[2],
-        kf->world_to_camera()(0, 3),
-        kf->world_to_camera()(1, 3),
-        kf->world_to_camera()(2, 3)
-      });
+void Map::remove_key_frame(std::shared_ptr<KeyFrame> key_frame)
+{
+  const auto kf_mp = key_frame->get_map_points();
+
+  // unlink map points from the key frame
+  for (const auto mp: kf_mp) {
+    mp->remove_keyframe(key_frame);
+    if (mp->get_keyframes().size() == 0) {
+      remove_map_point(mp);
+    }
   }
 
+  // unlink it from the covisibility graph
+  const auto neighbors = covisibility[key_frame];
+  for (const auto n_kf: neighbors) {
+    auto edge = edge_order(key_frame, n_kf);
+    covisibility_edge.erase(edge);
+  }
+  covisibility.erase(key_frame);
+
+  // remove it from the key frames vector
+  const auto it = std::find(keyframes.begin(), keyframes.end(), key_frame);
+  keyframes.erase(it);
+}
+
+void Map::local_bundle_adjustment(PinholeModel model)
+{
+  // std::unordered_set<KeyFramePtr> ba_key_frames {local_map.begin(), local_map.end()};
+  // ba_key_frames.insert(key_frame);
+
+  std::unordered_set<KeyFramePtr> ba_key_frames = {keyframes.begin(), keyframes.end()};
+
+  // get all the map points in the local map
+  std::unordered_set<MapPointPtr> map_points;
+  for (const auto kf: ba_key_frames) {
+    for (const auto mp: kf->get_map_points()) {
+      if (mp->is_invalid()) {
+        remove_map_point(mp);
+      } else if (mp->get_keyframes().size() > 2) {
+        map_points.insert(mp);
+      }
+    }
+  }
+
+  std::cout << "Map points: " << map_points.size() << "\n";
+
+  // create se3 representation of each keyframe
+  std::unordered_map<KeyFramePtr, Eigen::Vector<double, 6>> kf_poses;
+  for (const auto & kf: ba_key_frames) {
+    Sophus::SE3<double> SE3{kf->world_to_camera()};
+    Eigen::Matrix<double, 6, 1> se3_vec = SE3.log();
+    kf_poses[kf] = se3_vec;
+  }
+
+  std::unordered_map<MapPointPtr, Eigen::Vector3d> points;
+  for (const auto & mp: map_points) {
+    points[mp] = mp->position();
+  }
 
   // create the bundle adjustment problem
   ceres::Problem problem;
-  for (size_t idx = 0; idx < key_frames.size(); idx++) {
-    for (const auto mp: key_frames[idx]->get_map_points()) {
-      if (mp_in_opt.find(mp) == mp_in_opt.end()) {
+  ceres::LossFunction * loss_function = new ceres::HuberLoss(0.1);
+  for (const auto & kf: ba_key_frames) {
+    for (const auto & mp: kf->get_map_points()) {
+
+      if (map_points.find(mp) == map_points.end()) {
         continue;
       }
 
-      const auto [observed_x, observed_y] = key_frames[idx]->get_observed_location(mp);
+      const auto [observed_x, observed_y] = kf->get_observed_location(mp);
       auto * cost_function = ReprojectionError::Create(observed_x, observed_y, model);
 
       problem.AddResidualBlock(
-        cost_function, nullptr, camera_params[idx].data(),
-        mp->position().data());
-      if (key_frames[idx] == keyframes[0]) { // fix the first camera
-        problem.SetParameterBlockConstant(camera_params[idx].data());
-      }
+        cost_function, loss_function, kf_poses[kf].data(),
+        points[mp].data());
 
-      // fix the cameras in the second camera layer
-      if (second_key_frames.find(key_frames[idx]) != second_key_frames.end()) {
-        problem.SetParameterBlockConstant(camera_params[idx].data());
+      if (kf == keyframes[0]) {  // fix the first key frame
+        problem.SetParameterBlockConstant(kf_poses[kf].data());
       }
     }
   }
 
-
   ceres::Solver::Options options;
   options.sparse_linear_algebra_library_type = ceres::SUITE_SPARSE;
-  options.linear_solver_type = ceres::SPARSE_SCHUR;
-  // options.minimizer_progress_to_stdout = true;
+  options.linear_solver_type = ceres::ITERATIVE_SCHUR;
+  options.preconditioner_type = ceres::SCHUR_JACOBI;
+  options.minimizer_progress_to_stdout = true;
+  options.use_explicit_schur_complement = true;
+  options.max_linear_solver_iterations = 500;
+  options.max_num_iterations = 500;
   ceres::Solver::Summary summary;
   ceres::Solve(options, &problem, &summary);
 
-  for (size_t idx = 0; idx < key_frames.size(); idx++) {
-    Eigen::Vector3d translation = {
-      camera_params[idx][3],
-      camera_params[idx][4],
-      camera_params[idx][5]
-    };
-    Eigen::Vector3d aa_vec = {
-      camera_params[idx][0],
-      camera_params[idx][1],
-      camera_params[idx][2]
-    };
+  std::cout << summary.FullReport() << "\n";
 
-    Eigen::Matrix3d rotation;
-    rotation = Eigen::AngleAxisd(aa_vec.norm(), aa_vec.normalized());
-
-    // create 4x4 transformation matrix
-    Eigen::Matrix4d transform = Eigen::Matrix4d::Identity();
-    transform.block<3, 3>(0, 0) = rotation;
-    transform.block<3, 1>(0, 3) = translation;
-    key_frames[idx]->set_world_to_camera(transform);
+  if (!summary.IsSolutionUsable()) {
+    std::cerr << "Bundle adjustment failed\n";
+    return;
   }
+
+  // convert back to SE3
+  for (const auto & [kf, se3_vec]: kf_poses) {
+    Eigen::Matrix4d tf = Sophus::SE3<double>::exp(se3_vec).matrix();
+    kf->set_world_to_camera(tf);
+  }
+
+  // update the map points
+  for (const auto & mp: mappoints) {
+    mp->update_position();
+  }
+
+  for (const auto & mp: map_points) {
+    mp->set_position(points[mp]);
+  }
+
 }
 
 size_t Map::get_edge(
   std::shared_ptr<KeyFrame> key_frame_1,
   std::shared_ptr<KeyFrame> key_frame_2)
 {
-  if (key_frame_1 < key_frame_2) {
-    return covisibility_edge[{key_frame_1, key_frame_2}];
-  } else {
-    return covisibility_edge[{key_frame_2, key_frame_1}];
-  }
+  return covisibility_edge[edge_order(key_frame_1, key_frame_2)];
 }
 
 void Map::insert_edge(
@@ -318,10 +346,19 @@ void Map::insert_edge(
   std::shared_ptr<KeyFrame> key_frame_2,
   size_t count)
 {
+  covisibility[key_frame_1].push_back(key_frame_2);
+  covisibility[key_frame_2].push_back(key_frame_1);
+  covisibility_edge[edge_order(key_frame_1, key_frame_2)] = count;
+}
+
+std::pair<KeyFramePtr, KeyFramePtr> Map::edge_order(
+  std::shared_ptr<KeyFrame> key_frame_1,
+  std::shared_ptr<KeyFrame> key_frame_2)
+{
   if (key_frame_1 < key_frame_2) {
-    covisibility_edge[{key_frame_1, key_frame_2}] = count;
+    return {key_frame_1, key_frame_2};
   } else {
-    covisibility_edge[{key_frame_2, key_frame_1}] = count;
+    return {key_frame_2, key_frame_1};
   }
 }
 

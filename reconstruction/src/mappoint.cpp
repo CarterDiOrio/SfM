@@ -5,7 +5,7 @@
 #include <iterator>
 #include <memory>
 #include <ranges>
-#include <iostream>
+#include <math.h>
 
 namespace sfm
 {
@@ -78,19 +78,34 @@ void MapPoint::update_position()
   pos = positions[idx];
 }
 
-void MapPoint::remove_keyframe(std::weak_ptr<KeyFrame> keyframe)
+void MapPoint::remove_keyframe(const std::weak_ptr<KeyFrame> keyframe)
 {
+  const auto before = keyframes.size();
   keyframes.erase(
     std::remove_if(
       keyframes.begin(),
       keyframes.end(),
-      [keyframe](const auto & kf) {
+      [keyframe](const std::weak_ptr<KeyFrame> & kf) {
         return kf.lock() == keyframe.lock();
       }),
     keyframes.end());
+  const auto after = keyframes.size();
+  assert(before > after);
 }
 
-std::vector<std::weak_ptr<KeyFrame>> MapPoint::get_keyframes()
+void MapPoint::set_position(Eigen::Vector3d & pos)
+{
+  this->pos = pos;
+}
+
+
+bool MapPoint::is_invalid() const
+{
+  return isnan(pos.x()) || isnan(pos.y()) || isnan(pos.z()) || pos.x() > 1e6 || pos.y() > 1e6 ||
+         pos.z() > 1e6;
+}
+
+std::vector<std::weak_ptr<KeyFrame>> MapPoint::get_keyframes() const
 {
   return keyframes;
 }

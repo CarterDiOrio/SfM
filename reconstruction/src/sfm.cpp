@@ -6,7 +6,9 @@
 #include <ceres/manifold.h>
 #include <ceres/solver.h>
 #include <ceres/types.h>
+#include <chrono>
 #include <ctime>
+#include <iostream>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -38,7 +40,8 @@ namespace sfm
 {
 Reconstruction::Reconstruction(ReconstructionOptions options)
 : matcher{cv::BFMatcher::create(cv::NORM_HAMMING, true)},
-  detector{cv::ORB::create(3000)},
+  detector{cv::ORB::create(4000
+    )},
   model{options.model},
   options{options},
   place_recognition(options.place_recognition_voc)
@@ -89,7 +92,8 @@ void Reconstruction::initialize_reconstruction(const cv::Mat & frame, const cv::
 
 void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat & depth)
 {
-  auto start = std::clock();
+  auto first = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::system_clock::now().time_since_epoch());
 
   // 1. get orb features in frame
   const auto features = detect_features(frame, detector);
@@ -110,11 +114,13 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
     }
   }
 
+  // draw matches between frames
   cv::Mat mimg;
   cv::drawMatches(
     frame, keypoints, previous_shared->img,
     previous_shared->get_keypoints(), matches, mimg);
   cv::imshow("matches", mimg);
+
 
   // 3. Compute PnP from map points to 2D locations in current frame
   std::vector<cv::Point2d> image_points;
@@ -146,6 +152,7 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
   );
   const auto shared_current = current.lock();
 
+  // add to place recognition engine
   shared_current->set_bow_vector(place_recognition.convert(shared_current->get_descriptors()));
   place_recognition.add(shared_current);
 
@@ -158,6 +165,26 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
   // track the local map
   track_local_map(shared_current);
 
+  //perform pnp
+  image_points.clear();
+  world_points.clear();
+  for (const auto & mp: shared_current->get_map_points()) {
+    const auto pt = shared_current->get_observed_location(mp);
+    image_points.push_back(cv::Point2d{pt.first, pt.second});
+    world_points.push_back(mp->position());
+  }
+
+  const auto [local_transformation, local_inliers] = pnp(image_points, world_points);
+  shared_current->set_world_to_camera(local_transformation.inverse());
+  for (const auto [idx, mp]: std::views::enumerate(shared_current->get_map_points())) {
+    // remove outliers
+    if (local_inliers[idx] < 1) {
+      map.unlink_kf_and_mp(shared_current, mp);
+    }
+  }
+  map.update_covisibility(shared_current);
+
+
   // create new map points from unmatched points
   const auto mps = shared_current->create_map_points();
   for (const auto & [idx, map_point]: mps) {
@@ -168,56 +195,74 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
   // attempt to loop close
   loop_closing(shared_current);
 
+  // check if local map needs to be pruned
+  for (const auto & kf: map.get_neighbors(shared_current)) {
+    const auto is_redundant = map.check_keyframe_redundancy(kf);
+    if (is_redundant) {
+      map.remove_key_frame(kf);
+      place_recognition.forbid(kf);
+    }
+  }
+
+
+  auto second = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::system_clock::now().time_since_epoch());
+
+  // std::cout << "time: " << second.count() - first.count() << std::endl;
+
   previous_keyframe = current;
 }
 
 void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
 {
-  const auto local_map = map.get_local_map(key_frame, 2);
+  const auto local_map = map.get_local_map(key_frame, 2, 15);
 
   // map points in current keyframe
   auto current_map_points = key_frame->get_map_points();
   std::unordered_set<std::shared_ptr<MapPoint>> current_set{current_map_points.begin(),
     current_map_points.end()};
 
-  // filter for points in the view of the camera (in front and in frame)
-  const auto in_front_filter = [transform = key_frame->world_to_camera()](const auto mp) {
-      const auto img_p = transform * mp->position().homogeneous();
-      return img_p.z() > 0 && img_p.x() >= 0 && img_p.x() <= 1280 && img_p.y() >= 0 &&
-             img_p.y() <= 720;
-    };
-
-  // get all the map points in the local map
+  // get all the map points in the local map not in the current key frame
   auto mps = local_map |
-    std::views::join |
     std::views::transform([](auto & kf) {return kf->get_map_points();}) |
     std::views::join |
     std::views::filter(
     [&current_set](auto & mp) {
       return current_set.find(mp) == current_set.end();
     }) |
-    std::views::filter(in_front_filter);
+    std::views::filter(
+    [&key_frame](auto & mp) {
+      return key_frame->point_in_frame(*mp);
+    });
 
   std::unordered_set<std::shared_ptr<MapPoint>> local_set;
   for (const auto mp: mps) {
     local_set.insert(mp);
   }
 
+  std::cout << "local map size: " << local_map.size() << " total size: " <<
+    map.get_key_frames().size() <<
+    std::endl;
+
 
   // filter map points
   for (auto mp: local_set) {
     auto projection = project_map_point(*key_frame, *mp);
-    const auto features = key_frame->get_features_within_radius(projection.x, projection.y, 3.0);
+    const auto features = key_frame->get_features_within_radius(
+      projection.x, projection.y, 2.0,
+      false);
 
     if (features.size() > 0) {
       const auto mp_desc = mp->description();
 
       // get the features with the minimum distance
-      double min_dist = cv::norm(mp_desc, key_frame->get_point(0).second, cv::NORM_HAMMING);
+      double min_dist =
+        cv::norm(mp_desc, key_frame->get_point(features[0]).second, cv::NORM_HAMMING);
       size_t min_idx = features[0];
 
       for (size_t idx: features) {
-        double dist = cv::norm(mp_desc, key_frame->get_point(0).second, cv::NORM_HAMMING);
+        double dist =
+          cv::norm(mp_desc, key_frame->get_point(idx).second, cv::NORM_HAMMING);
         if (dist < min_dist) {
           min_idx = idx;
           min_dist = dist;
@@ -229,7 +274,6 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
     }
   }
 
-  map.update_covisibility(key_frame);
 }
 
 std::pair<Eigen::Matrix4d, std::vector<int>> Reconstruction::pnp(
@@ -317,7 +361,7 @@ std::vector<KeyFrameGroup> Reconstruction::loop_candidate_refinment(
 
     for (const auto & [idx, candidate]: std::views::enumerate(candidates)) {
       if (!in_group[idx]) {
-        const auto & candidate_cov = map.get_neighbors(candidate, 30);
+        const auto & candidate_cov = map.get_neighbors(candidate, 60);
         if (group.covisibility.find(candidate) != group.covisibility.end()) {
           // is the candidate in the group directly
           group.expanded = true;
@@ -419,7 +463,7 @@ std::optional<KeyFrameGroup> Reconstruction::loop_candidate_geometric(
     std::vector<cv::DMatch> matches;
     matcher->match(key_frame->get_descriptors_mat(), descriptors, matches);
 
-    // get 2D 3D correspondences
+    // get 2D-3D correspondences
     std::vector<cv::Point2d> image_points;
     std::vector<Eigen::Vector3d> world_points;
     for (const auto & match: matches) {
@@ -436,7 +480,6 @@ std::optional<KeyFrameGroup> Reconstruction::loop_candidate_geometric(
         });
 
       if (count > 30) {
-        // std::cout << "inliers: " << count << std::endl;
         group.T_wk = transformation;
         return group;
       }
@@ -448,7 +491,6 @@ std::optional<KeyFrameGroup> Reconstruction::loop_candidate_geometric(
 
   return {};
 }
-
 
 void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameGroup & group)
 {
@@ -471,19 +513,18 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
   }
 
 
-  // project and match map points
-  const auto in_front_filter = [transform = key_frame->world_to_camera()](const auto mp) {
-      const auto img_p = transform * mp->position().homogeneous();
-      return img_p.z() > 0 && img_p.x() >= 0 && img_p.x() <= 2000 && img_p.y() >= 0 &&
-             img_p.y() <= 500;
-    };
+  auto visibile_map_points = group_map_points | std::views::filter(
+    [&key_frame](const auto & mp) {
+      return key_frame->point_in_frame(*mp);
+    });
 
-  for (const auto & mp: group_map_points | std::views::filter(in_front_filter)) {
+  for (const auto & mp: visibile_map_points) {
     auto projection = project_map_point(*key_frame, *mp);
+
     const auto features = key_frame->get_features_within_radius(
       projection.x,
       projection.y,
-      8.0,
+      2.0,
       true);
 
     if (features.size() > 0) {
@@ -499,18 +540,7 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
 
       const auto kf_mp = key_frame->corresponding_map_point(min_idx);
       if (kf_mp.has_value()) {
-        if (group_map_points.find(kf_mp.value()) != group_map_points.end()) {
-          // we do not want to remove map points from the group because
-          // they are the originals and we are currenlty processing them
-          // Just unlink the map point from the key frame
-          key_frame->remove_map_point(kf_mp.value());
-          kf_mp.value()->remove_keyframe(key_frame);
-        } else {
-          // map point is not in the group and matches in the group, needs
-          // to be merged. Remove and link.
-          key_frame->remove_map_point(kf_mp.value());
-          kf_mp.value()->remove_keyframe(key_frame);
-        }
+        map.unlink_kf_and_mp(key_frame, kf_mp.value());
       }
 
       map.link_keyframe_to_map_point(key_frame, min_idx, mp);
@@ -579,9 +609,6 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
     }
   }
 
-  std::cout << "normal edges: " << normal_edges.size() << std::endl;
-
-
   // add normal edges to the problem
   for (const auto & [kf_a, kf_b]: normal_edges) {
     auto & a_pose = kf_poses[kf_a];
@@ -607,7 +634,7 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
   const auto & se3_vec = kf_poses[key_frame];
   problem.SetParameterBlockConstant(se3_vec.data());
 
-  // also lock the original key frame
+  // also lock the original key frame to prevent the map from shifting
   const auto & original_se3_vec = kf_poses[map.keyframes[0]];
   problem.SetParameterBlockConstant(original_se3_vec.data());
 
@@ -620,7 +647,6 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
   ceres::Solver::Summary summary;
   options.max_num_iterations = 50;
   ceres::Solve(options, &problem, &summary);
-  // std::cout << summary.FullReport() << std::endl;
 
   for (const auto & [kf, se3_vec]: kf_poses) {
     Eigen::Matrix4d tf = Sophus::SE3<double>::exp(se3_vec).matrix();
@@ -629,11 +655,7 @@ void Reconstruction::loop_closure(std::shared_ptr<KeyFrame> key_frame, KeyFrameG
 
   // update all the map points
   for (const auto & mp: map.mappoints) {
-    try {
-      mp->update_position();
-    } catch (std::out_of_range & e) {
-      // std::cout << e.what() << std::endl;
-    }
+    mp->update_position();
   }
 
   std::cout << "loop closed" << std::endl;

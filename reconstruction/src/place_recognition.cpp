@@ -23,6 +23,7 @@ void PlaceRecognition::add(std::shared_ptr<KeyFrame> key_frame)
 {
   auto entry_id = database.add(key_frame->get_descriptors());
   entry_key_frame_map[entry_id] = key_frame;
+  key_frame_entry_map[key_frame] = entry_id;
 }
 
 std::vector<std::shared_ptr<KeyFrame>> PlaceRecognition::query(
@@ -35,9 +36,16 @@ std::vector<std::shared_ptr<KeyFrame>> PlaceRecognition::query(
   database.query(query_key_frame.get_descriptors(), QueryResults, num_matches);
   const auto query_kf = entry_key_frame_map.at(QueryResults[0].Id);
 
+  auto filtered_results = QueryResults |
+    std::views::drop(1) | // first element is always the query
+    std::views::filter(
+    [this](const auto & result) {
+      return entry_key_frame_map.find(result.Id) != entry_key_frame_map.end();
+    });
+
   // group matches by covisibility
   std::vector<QueryQroup> groups;
-  for (const auto & result: QueryResults | std::views::drop(1)) {   // first element is always the query
+  for (const auto & result: filtered_results) {
     const auto key_frame = entry_key_frame_map.at(result.Id);
     auto cov = map.get_neighbors(key_frame) | std::views::filter(
       [&query_kf](const auto & kf) {
@@ -92,6 +100,12 @@ std::vector<std::shared_ptr<KeyFrame>> PlaceRecognition::query(
   }
 
   return {matches.begin(), matches.end()};
+}
+
+void PlaceRecognition::forbid(std::shared_ptr<KeyFrame> key_frame)
+{
+  entry_key_frame_map.erase(key_frame_entry_map[key_frame]);
+  key_frame_entry_map.erase(key_frame);
 }
 
 DBoW2::BowVector PlaceRecognition::convert(const std::vector<cv::Mat> & descriptiors) const

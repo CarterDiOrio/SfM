@@ -64,7 +64,7 @@ public:
 
   /// @brief Gets a const reference to the internal map
   /// @return the map
-  inline const Map & get_map() const
+  inline Map & get_map()
   {
     return map;
   }
@@ -77,7 +77,7 @@ private:
   PlaceRecognition place_recognition;
 
   /// @brief the number of times a group must be expanded in order to be consistent
-  static constexpr size_t expansion_consistency_threshold = 9;
+  static constexpr size_t expansion_consistency_threshold = 3;
   std::vector<KeyFrameGroup> keyframe_groups;
 
   std::weak_ptr<KeyFrame> previous_keyframe;

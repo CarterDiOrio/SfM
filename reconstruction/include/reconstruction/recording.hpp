@@ -13,7 +13,7 @@ namespace sfm::utils
 class RecordingReader
 {
 public:
-  RecordingReader(const std::string & directory);
+  RecordingReader(const std::string & directory, size_t start_frame = 0);
 
   /// @brief Optionally returns a pair {color image, depth image} if the files exist
   /// @return A pair of color and depth image

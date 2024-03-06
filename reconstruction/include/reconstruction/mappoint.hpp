@@ -45,8 +45,15 @@ public:
   /// @brief updates the position to be the best observed position in the world
   void update_position();
 
+  /// @brief Sets the position of the map point
+  /// @param pos the new position of the map point
+  void set_position(Eigen::Vector3d & pos);
+
+  /// @brief Checks if the map point is invalid
+  bool is_invalid() const;
+
   /// @brief Gets the keyframes where this point is visible
-  std::vector<std::weak_ptr<KeyFrame>> get_keyframes();
+  std::vector<std::weak_ptr<KeyFrame>> get_keyframes() const;
 
   using key_frames_t = std::vector<std::weak_ptr<KeyFrame>>;
   key_frames_t::iterator begin();
