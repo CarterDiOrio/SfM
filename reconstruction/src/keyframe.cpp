@@ -266,7 +266,6 @@ bool KeyFrame::point_in_frame(const MapPoint & point) const
   Eigen::Vector3d ray = (T_kw * point.position().homogeneous()).head<3>().normalized();
 
   if (mean_ray.dot(ray) < std::cos(1.0472)) {
-    std::cout << "BAD RAY" << std::endl;
     return false;
   }
 

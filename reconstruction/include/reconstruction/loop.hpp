@@ -1,64 +1,88 @@
-#ifndef INC_GUARD_LOOP_HPP
-#define INC_GUARD_LOOP_HPP
+#ifndef INC_GUARD_LOOP_CLOSING_HPP
+#define INC_GUARD_LOOP_CLOSING_HPP
 
-#include "ceres/autodiff_cost_function.h"
-#include <Eigen/Geometry>
-#include <Eigen/src/Geometry/Quaternion.h>
-#include <ceres/cost_function.h>
-#include <ceres/problem.h>
-
-#include <sophus/se3.hpp>
+#include "reconstruction/keyframe.hpp"
+#include "reconstruction/map.hpp"
+#include "reconstruction/place_recognition.hpp"
+#include "reconstruction/pinhole.hpp"
 
 namespace sfm
 {
-class PoseGraph3dErrorTerm
+/// @brief Handles detecting loops and performing loop closure on the map
+class LoopCloser
 {
 public:
-  PoseGraph3dErrorTerm(
-    Eigen::Matrix4d T_ab_measured
-  )
-  : T_ab_measured{T_ab_measured}
-  {}
-
-  /// @brief The residual function
-  /// @param p_a_ptr the pointer to the x, y, z pose of the first node
-  /// @param q_a_ptr the pointer to the quaternion orientation of the first node
-  /// @param p_b_ptr the pointer to the x, y, z pose of the second node
-  /// @param q_b_ptr the pointer to the quaternion orientation of the second node
-  /// @param residuals_ptr the pointer to the residuals
-  template<typename T>
-  bool operator()(
-    const T * const a_se3_vec,
-    const T * const b_se3_vec,
-    T * residuals_ptr) const
+  struct LoopCloserOptions
   {
-    Eigen::Map<const Eigen::Matrix<T, 6, 1>> a_se3(a_se3_vec);
-    Eigen::Map<const Eigen::Matrix<T, 6, 1>> b_se3(b_se3_vec);
+    size_t covisibility_threshold;
+  };
 
-    Sophus::SE3<T> T_a = Sophus::SE3<T>::exp(a_se3);
-    Sophus::SE3<T> T_b = Sophus::SE3<T>::exp(b_se3);
-
-    Sophus::SE3<T> T_id =
-      Sophus::SE3<T>{T_ab_measured.template cast<T>()} *T_b * Sophus::SE3<T>{T_a}.inverse();
-    Eigen::Vector<T, 6> e_ab = T_id.log();
-
-    // map residuals
-    Eigen::Map<Eigen::Matrix<T, 6, 1>> residuals(residuals_ptr);
-    residuals = e_ab;
-
-    return true;
-  }
-
-  static ceres::CostFunction * Create(
-    const Eigen::Matrix4d T_ab_measured)
+  /// @brief Key Frame groups for loop closure
+  struct KeyFrameGroup
   {
-    return new ceres::AutoDiffCostFunction<PoseGraph3dErrorTerm, 6, 6, 6>(
-      new PoseGraph3dErrorTerm(T_ab_measured));
-  }
+    /// @brief the key frames in the group
+    std::unordered_set<std::shared_ptr<KeyFrame>> key_frames;
+
+    std::unordered_set<std::shared_ptr<KeyFrame>> covisibility;
+
+    /// @brief the map points in the group
+    std::unordered_set<std::shared_ptr<MapPoint>> map_points;
+
+    /// @brief the transformation from the world to the keyframe
+    Eigen::Matrix4d T_wk;
+
+    /// @brief whether or not the group was expanded
+    bool expanded = false;
+
+    /// @brief the number of times the group was expanded
+    size_t expanded_count = 0;
+  };
+
+  LoopCloser(
+    std::shared_ptr<PlaceRecognition> place_recognition,
+    std::shared_ptr<Map> map,
+    std::shared_ptr<cv::DescriptorMatcher> matcher,
+    LoopCloserOptions options
+  );
+
+  void detect_loops(KeyFramePtr key_frame);
 
 private:
-  Eigen::Matrix4d T_ab_measured;
+  const LoopCloserOptions options;
+  const std::shared_ptr<PlaceRecognition> place_recognition;
+  const std::shared_ptr<Map> map;
+  std::vector<KeyFrameGroup> key_frame_groups;
+  std::shared_ptr<cv::DescriptorMatcher> matcher;
+  static constexpr size_t expansion_consistency_threshold = 3;
+
+
+  /// @brief Detects key frames that are similar to other areas of the map
+  /// @param key_frame the key frame to detect with.
+  std::vector<KeyFramePtr> detect_candidate_keyframes(KeyFramePtr key_frame);
+
+  /// @brief Creates or finds groups that the candidate key frames belong to
+  /// @param key_frame the current key frame
+  /// @param candidates the key frames that the current key frame is similar to.
+  std::vector<KeyFrameGroup> find_groups(
+    KeyFramePtr key_frame,
+    const std::vector<KeyFramePtr> & candidates);
+
+  /// @brief Checks each group for
+  /// @param key_frame the current key frame
+  /// @param groups key frame groups that have passed time consistency.
+  /// @return Optionally a KeyFrameGroup if any have passed the check
+  std::optional<KeyFrameGroup> group_geometric_check(
+    KeyFramePtr key_frame,
+    std::vector<KeyFrameGroup> & groups);
+
+  /// @brief closes and optimizes the loop
+  /// @param key_frame the current key frame
+  /// @param group the current group
+  void close_loop(KeyFramePtr key_frame, KeyFrameGroup & group);
+
 };
+
 }
 
-#endif // INC_GUARD_LOOP_HPP
+
+#endif

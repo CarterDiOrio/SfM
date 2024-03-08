@@ -5,6 +5,9 @@
 
 #include <Eigen/Dense>
 #include <opencv2/core/types.hpp>
+#include <opencv2/calib3d.hpp>
+#include <opencv2/core/eigen.hpp>
+
 
 namespace sfm
 {
@@ -49,6 +52,15 @@ cv::Point2d project_pixel_to_point(
 cv::Mat model_to_mat(const PinholeModel & model);
 
 
+/// @brief Performs Perspective-n-Point between the image points and the world points
+/// @param image_points the 2D points in the image
+/// @param world_points the corresponding 3D world peoints
+/// @param model the camera model
+/// @return the 4x4 transformation matrix of the camera to the world
+std::pair<Eigen::Matrix4d, std::vector<int>> pnp(
+  const std::vector<cv::Point2d> & image_points,
+  const std::vector<Eigen::Vector3d> & world_points,
+  const PinholeModel & model);
 }
 
 #endif
