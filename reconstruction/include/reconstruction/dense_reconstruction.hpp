@@ -41,17 +41,17 @@ private:
 
   sfm::Map & map;
 
-  static constexpr double base_line = 50.0 / 1000.0;
+  static constexpr double base_line = 0.50;
 
-  static constexpr double T_cov = 0.1;
+  static constexpr double T_cov = 0.5;
 
   static constexpr double radius_removal_radius = 0.1;
 
   static constexpr size_t radius_removal_count = 10;
 
-  static constexpr double voxel_size = 1.0;
+  static constexpr double voxel_size = 0.05;
 
-  static constexpr double T_dist = 5.0;
+  static constexpr double T_dist = 0.50;
 
   static constexpr double min_dist_filter = 0.0;
 

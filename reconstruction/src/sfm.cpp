@@ -197,16 +197,7 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
   map->update_covisibility(shared_current);
 
   // attempt to loop close
-  loop_closer->detect_loops(shared_current);
-
-  // check if local map needs to be pruned
-  // for (const auto & kf: map->get_neighbors(shared_current)) {
-  //   const auto is_redundant = map->check_keyframe_redundancy(kf);
-  //   if (is_redundant) {
-  //     map->remove_key_frame(kf);
-  //     place_recognition->forbid(kf);
-  //   }
-  // }
+  // loop_closer->detect_loops(shared_current);
 
   auto second = std::chrono::duration_cast<std::chrono::milliseconds>(
     std::chrono::system_clock::now().time_since_epoch());
@@ -216,7 +207,7 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
 
 void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
 {
-  const auto local_map = map->get_local_map(key_frame, 2, 15);
+  const auto local_map = map->get_local_map(key_frame, 2, 30);
 
   // map points in current keyframe
   auto current_map_points = key_frame->get_map_points();
@@ -241,9 +232,9 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
     local_set.insert(mp);
   }
 
-  std::cout << "local map size: " << local_map.size() << " total size: " <<
-    map->get_key_frames().size() <<
-    std::endl;
+  // std::cout << "local map size: " << local_map.size() << " total size: " <<
+  //   map->get_key_frames().size() <<
+  //   std::endl;
 
   // filter map points
   for (auto mp: local_set) {
