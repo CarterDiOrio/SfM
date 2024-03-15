@@ -66,14 +66,6 @@ int main(int argc, char ** argv)
     frames = reader.read_frames();
   }
 
-  // reconstruction.get_map().local_bundle_adjustment(model);
-
-  for (const auto & kf: reconstruction.get_map().keyframes) {
-    const auto tf = kf->transform();
-    std::cout << tf.row(0) << ' ' << tf.row(1) << ' ' << tf.row(2) << std::endl;
-  }
-
-
   std::ofstream dense_file;
   dense_file.open("./dense.txt");
   auto map = reconstruction.get_map();
