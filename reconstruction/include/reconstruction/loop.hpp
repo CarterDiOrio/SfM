@@ -4,7 +4,6 @@
 #include "reconstruction/keyframe.hpp"
 #include "reconstruction/map.hpp"
 #include "reconstruction/place_recognition.hpp"
-#include "reconstruction/pinhole.hpp"
 
 namespace sfm
 {
@@ -15,18 +14,19 @@ public:
   struct LoopCloserOptions
   {
     size_t covisibility_threshold;
+    size_t inlier_threshold;
   };
 
   /// @brief Key Frame groups for loop closure
   struct KeyFrameGroup
   {
     /// @brief the key frames in the group
-    std::unordered_set<std::shared_ptr<KeyFrame>> key_frames;
+    std::unordered_set<KeyFramePtr> key_frames;
 
-    std::unordered_set<std::shared_ptr<KeyFrame>> covisibility;
+    std::unordered_set<KeyFramePtr> covisibility;
 
     /// @brief the map points in the group
-    std::unordered_set<std::shared_ptr<MapPoint>> map_points;
+    std::unordered_set<MapPointPtr> map_points;
 
     /// @brief the transformation from the world to the keyframe
     Eigen::Matrix4d T_wk;
@@ -36,6 +36,9 @@ public:
 
     /// @brief the number of times the group was expanded
     size_t expanded_count = 0;
+
+    /// @brief marks the group for deletion
+    bool should_delete = false;
   };
 
   LoopCloser(
@@ -45,7 +48,13 @@ public:
     LoopCloserOptions options
   );
 
+  /// @brief detects and closes loops
+  /// @param key_frame the key frame to detect loops with
   void detect_loops(KeyFramePtr key_frame);
+
+  /// @brief remove the key frame from any group
+  /// @param key_frame the key frame to remove
+  void remove_key_frame(KeyFramePtr key_frame);
 
 private:
   const LoopCloserOptions options;
@@ -79,7 +88,6 @@ private:
   /// @param key_frame the current key frame
   /// @param group the current group
   void close_loop(KeyFramePtr key_frame, KeyFrameGroup & group);
-
 };
 
 }

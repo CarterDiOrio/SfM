@@ -13,7 +13,6 @@
 #include <tuple>
 #include <unordered_map>
 #include <vector>
-#include <mutex>
 
 namespace sfm
 {
@@ -30,8 +29,8 @@ void DenseReconstruction::reconstruct(std::ostream & os)
 {
   // initialize Reconstruction info
   std::set<KeyFramePtr> keyframes;
-  for (const auto [pair, count]: map.covisibility_edge) {
-    if (count >= 100) {
+  for (const auto [pair, edge]: map.covisibility_edge) {
+    if (edge.shared >= 100) {
       keyframes.insert(pair.first);
       keyframes.insert(pair.second);
     }

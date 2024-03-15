@@ -26,6 +26,33 @@ using key_frame_set_t = std::vector<std::shared_ptr<KeyFrame>>;
 class Map
 {
 public:
+  /// @brief represents an edge in the map
+  struct MapEdge
+  {
+    /// @brief the first key frame
+    KeyFramePtr key_frame_1;
+
+    /// @brief the second key frame
+    KeyFramePtr key_frame_2;
+
+    /// @brief the number of features shared between them
+    size_t shared;
+
+    /// @brief compares this shared count to the rhs shared count
+    /// @param rhs the other edge to compare against
+    bool operator>(const MapEdge & rhs) const
+    {
+      return shared > rhs.shared;
+    }
+
+    /// @brief compares this shared count to the rhs shared count
+    /// @param rhs the other edge to compare against
+    bool operator<(const MapEdge & rhs) const
+    {
+      return shared < rhs.shared;
+    }
+  };
+
   Map();
 
   /// @brief Checks if the map is empty or not
@@ -112,11 +139,22 @@ public:
   void remove_map_point(std::shared_ptr<MapPoint> map_point);
 
   /// @brief removes a key frame from the map
-  void remove_key_frame(std::shared_ptr<KeyFrame> key_frame);
+  void remove_key_frame(
+    std::shared_ptr<KeyFrame> key_frame);
+
 
   /// @brief performs bundle adjustment on the local map around a keyframe
   /// @param key_frame the key frame to perform bundle adjustment around
-  void local_bundle_adjustment(PinholeModel model);
+  void global_bundle_adjustment(PinholeModel model);
+
+  void local_bundle_adjustment(PinholeModel model, KeyFramePtr key_frame);
+
+  void bundle_adjustment(
+    const PinholeModel & model,
+    std::unordered_set<KeyFramePtr> ba_key_frames,
+    size_t limit);
+
+  std::vector<MapEdge> get_essential_graph();
 
   /// @brief gets all the key frames in the map
   std::vector<KeyFramePtr> get_key_frames();
@@ -127,7 +165,7 @@ public:
   /// @return true if the key frame is redundant
   bool check_keyframe_redundancy(
     std::shared_ptr<KeyFrame> key_frame,
-    double threshold = 0.60);
+    double threshold = 0.80);
 
   inline size_t size()
   {
@@ -140,7 +178,7 @@ public:
   std::vector<std::shared_ptr<KeyFrame>> keyframes;
 
   /// @brief the number of map points in common between two keyframes
-  std::map<std::pair<KeyFramePtr, KeyFramePtr>, size_t> covisibility_edge;
+  std::map<std::pair<KeyFramePtr, KeyFramePtr>, MapEdge> covisibility_edge;
 
   /// @brief all the map points in the map
   std::vector<std::shared_ptr<MapPoint>> mappoints;
@@ -154,9 +192,12 @@ private:
     std::shared_ptr<KeyFrame> key_frame_1,
     std::shared_ptr<KeyFrame> key_frame_2);
 
-  size_t get_edge(
+  size_t shared_count(
     std::shared_ptr<KeyFrame> key_frame_1,
     std::shared_ptr<KeyFrame> key_frame_2);
+
+  /// @brief gets the edge in the covisibility graph between the two key frames
+  std::optional<MapEdge> get_edge(KeyFramePtr key_frame_1, KeyFramePtr key_frame_2);
 
   void insert_edge(
     std::shared_ptr<KeyFrame> key_frame_1,

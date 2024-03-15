@@ -43,7 +43,7 @@ private:
 
   static constexpr double base_line = 50.0 / 1000.0;
 
-  static constexpr double T_cov = 0.1;
+  static constexpr double T_cov = 0.2;
 
   static constexpr double radius_removal_radius = 0.1;
 

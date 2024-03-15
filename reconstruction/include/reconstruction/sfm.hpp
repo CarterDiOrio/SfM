@@ -65,13 +65,13 @@ public:
 
   /// @brief Gets a const reference to the internal map
   /// @return the map
-  inline Map & get_map()
+  std::shared_ptr<Map> get_map()
   {
-    return *map;
+    return map;
   }
 
 private:
-  const std::shared_ptr<cv::DescriptorMatcher> matcher;
+  std::shared_ptr<cv::DescriptorMatcher> matcher;
   const std::shared_ptr<cv::ORB> detector;
   const PinholeModel model;
   const ReconstructionOptions options;

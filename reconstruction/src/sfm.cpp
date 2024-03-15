@@ -1,7 +1,6 @@
 #include "reconstruction/sfm.hpp"
 
 #include <Eigen/src/Geometry/Quaternion.h>
-#include <algorithm>
 #include <ceres/loss_function.h>
 #include <ceres/manifold.h>
 #include <ceres/solver.h>
@@ -9,8 +8,6 @@
 #include <chrono>
 #include <ctime>
 #include <iostream>
-#include <iterator>
-#include <limits>
 #include <memory>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/base.hpp>
@@ -27,7 +24,6 @@
 #include "reconstruction/place_recognition.hpp"
 #include "reconstruction/utils.hpp"
 
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <ranges>
@@ -37,18 +33,19 @@
 namespace sfm
 {
 Reconstruction::Reconstruction(ReconstructionOptions options)
-: matcher{cv::BFMatcher::create(cv::NORM_HAMMING, true)},
-  detector{cv::ORB::create(2000
+: detector{cv::ORB::create(4000
     )},
   model{options.model},
-  options{options}
+  options{options},
+  matcher{cv::BFMatcher::create(cv::NORM_HAMMING)}
 {
   map = std::make_shared<Map>();
   place_recognition = std::make_shared<PlaceRecognition>(options.place_recognition_voc);
   loop_closer = std::make_shared<LoopCloser>(
     place_recognition, map, matcher,
     LoopCloser::LoopCloserOptions{
-      .covisibility_threshold = 30
+      .covisibility_threshold = 30,
+      .inlier_threshold = 30
     });
 }
 
@@ -200,13 +197,16 @@ void Reconstruction::track_previous_frame(const cv::Mat & frame, const cv::Mat &
   loop_closer->detect_loops(shared_current);
 
   // check if local map needs to be pruned
-  // for (const auto & kf: map->get_neighbors(shared_current)) {
-  //   const auto is_redundant = map->check_keyframe_redundancy(kf);
-  //   if (is_redundant) {
-  //     map->remove_key_frame(kf);
-  //     place_recognition->forbid(kf);
-  //   }
-  // }
+  for (const auto & kf: map->get_local_map(shared_current, 2, 15)) {
+    const auto is_redundant = map->check_keyframe_redundancy(kf, 0.80);
+    if (is_redundant) {
+      map->remove_key_frame(kf);
+      place_recognition->forbid(kf);
+      loop_closer->remove_key_frame(kf);
+    }
+  }
+
+  // map->local_bundle_adjustment(model, shared_current);
 
   auto second = std::chrono::duration_cast<std::chrono::milliseconds>(
     std::chrono::system_clock::now().time_since_epoch());
@@ -228,12 +228,8 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
     std::views::transform([](auto & kf) {return kf->get_map_points();}) |
     std::views::join |
     std::views::filter(
-    [&current_set](auto & mp) {
-      return current_set.find(mp) == current_set.end();
-    }) |
-    std::views::filter(
-    [&key_frame](auto & mp) {
-      return key_frame->point_in_frame(*mp);
+    [&current_set, &key_frame](auto & mp) {
+      return current_set.find(mp) == current_set.end() && key_frame->point_in_frame(*mp);
     });
 
   std::unordered_set<std::shared_ptr<MapPoint>> local_set;
@@ -249,7 +245,7 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
   for (auto mp: local_set) {
     auto projection = project_map_point(*key_frame, *mp);
     const auto features = key_frame->get_features_within_radius(
-      projection.x, projection.y, 2.0, false);
+      projection.x, projection.y, 4.0, false);
 
     if (features.size() > 0) {
       const auto mp_desc = mp->description();
@@ -268,7 +264,6 @@ void Reconstruction::track_local_map(std::shared_ptr<KeyFrame> key_frame)
         }
       }
 
-      // link the matched point to the key frame
       map->link_keyframe_to_map_point(key_frame, min_idx, mp);
     }
   }

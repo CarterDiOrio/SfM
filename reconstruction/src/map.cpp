@@ -21,6 +21,7 @@
 #include "reconstruction/bundle_adjust.hpp"
 #include "reconstruction/pinhole.hpp"
 #include <sophus/se3.hpp>
+#include <queue>
 
 namespace sfm
 {
@@ -110,11 +111,6 @@ void Map::covisibility_insert(
   std::shared_ptr<KeyFrame> key_frame_2,
   size_t count)
 {
-  // check if the key frames are already in the graph
-  if (covisibility_edge.find(edge_order(key_frame_1, key_frame_2)) != covisibility_edge.end()) {
-    return;
-  }
-
   insert_edge(key_frame_1, key_frame_2, count);
 }
 
@@ -134,7 +130,7 @@ std::unordered_set<KeyFramePtr> Map::get_local_map(
     size_t layer_size = queue.size();
     for (size_t i = 0; i < layer_size; i++) {
       const auto current_key_frame = queue.front();
-      const auto neighbors = get_neighbors(current_key_frame, 1);
+      const auto neighbors = get_neighbors(current_key_frame, min_shared_features);
       for (const auto kf: neighbors) {
         if (local_map.find(kf) == local_map.end()) {
           local_map.insert(kf);
@@ -153,8 +149,8 @@ std::vector<std::shared_ptr<KeyFrame>> Map::get_neighbors(
   std::shared_ptr<KeyFrame> key_frame, size_t min_shared_features)
 {
   auto kfs = covisibility[key_frame] | std::views::filter(
-    [&key_frame, min_shared_features, & edges = covisibility_edge, this](const auto & kf) {
-      return this->get_edge(key_frame, kf) > min_shared_features;
+    [&key_frame, min_shared_features, this](const auto & kf) {
+      return shared_count(key_frame, kf) > min_shared_features;
     });
   return {kfs.begin(), kfs.end()};
 }
@@ -201,7 +197,7 @@ bool Map::check_keyframe_redundancy(
           const auto dist_kf = (kf.lock()->world_to_camera().block<3, 1>(0, 3) -
             key_frame->world_to_camera().block<3, 1>(0, 3)).norm();
 
-          if (dist <= ref_dist && dist_kf <= 100) {
+          if (dist <= ref_dist) {
             scale_count++;
           }
         }
@@ -242,21 +238,45 @@ void Map::remove_key_frame(std::shared_ptr<KeyFrame> key_frame)
   keyframes.erase(it);
 }
 
-void Map::local_bundle_adjustment(PinholeModel model)
+void Map::global_bundle_adjustment(PinholeModel model)
 {
-  // std::unordered_set<KeyFramePtr> ba_key_frames {local_map.begin(), local_map.end()};
-  // ba_key_frames.insert(key_frame);
-
   std::unordered_set<KeyFramePtr> ba_key_frames = {keyframes.begin(), keyframes.end()};
+  bundle_adjustment(model, ba_key_frames, 500);
+}
 
+void Map::local_bundle_adjustment(PinholeModel model, KeyFramePtr key_frame)
+{
+  const auto neighbors = get_neighbors(key_frame, 30);
+  std::unordered_set<KeyFramePtr> ba_key_frames{neighbors.begin(), neighbors.end()};
+  ba_key_frames.insert(key_frame);
+  bundle_adjustment(model, ba_key_frames, 30);
+}
+
+void Map::bundle_adjustment(
+  const PinholeModel & model,
+  std::unordered_set<KeyFramePtr> ba_key_frames,
+  size_t limit)
+{
   // get all the map points in the local map
   std::unordered_set<MapPointPtr> map_points;
   for (const auto kf: ba_key_frames) {
     for (const auto mp: kf->get_map_points()) {
       if (mp->is_invalid()) {
         remove_map_point(mp);
-      } else if (mp->get_keyframes().size() > 2) {
+      } else if (mp->get_keyframes().size() > 5) {
         map_points.insert(mp);
+      }
+    }
+  }
+
+  //find key frames that see those map points but aren't in the set
+  std::unordered_set<KeyFramePtr> fixed_key_frames;
+  for (const auto mp: map_points) {
+    for (const auto kf: mp->get_keyframes()) {
+      const auto skf = kf.lock();
+      if (ba_key_frames.find(skf) == ba_key_frames.end()) {
+        fixed_key_frames.insert(skf);
+        ba_key_frames.insert(skf);
       }
     }
   }
@@ -278,7 +298,7 @@ void Map::local_bundle_adjustment(PinholeModel model)
 
   // create the bundle adjustment problem
   ceres::Problem problem;
-  ceres::LossFunction * loss_function = new ceres::HuberLoss(0.1);
+  ceres::LossFunction * loss_function = new ceres::HuberLoss(0.01);
   for (const auto & kf: ba_key_frames) {
     for (const auto & mp: kf->get_map_points()) {
 
@@ -295,6 +315,8 @@ void Map::local_bundle_adjustment(PinholeModel model)
 
       if (kf == keyframes[0]) {  // fix the first key frame
         problem.SetParameterBlockConstant(kf_poses[kf].data());
+      } else if (fixed_key_frames.find(kf) != fixed_key_frames.end()) {
+        problem.SetParameterBlockConstant(kf_poses[kf].data());
       }
     }
   }
@@ -303,27 +325,27 @@ void Map::local_bundle_adjustment(PinholeModel model)
   options.sparse_linear_algebra_library_type = ceres::SUITE_SPARSE;
   options.linear_solver_type = ceres::ITERATIVE_SCHUR;
   options.preconditioner_type = ceres::SCHUR_JACOBI;
-  options.minimizer_progress_to_stdout = true;
+// options.minimizer_progress_to_stdout = true;
   options.use_explicit_schur_complement = true;
-  options.max_linear_solver_iterations = 500;
-  options.max_num_iterations = 500;
+  options.max_linear_solver_iterations = limit;
+  options.max_num_iterations = limit;
   ceres::Solver::Summary summary;
   ceres::Solve(options, &problem, &summary);
 
-  std::cout << summary.FullReport() << "\n";
+// std::cout << summary.FullReport() << "\n";
 
   if (!summary.IsSolutionUsable()) {
-    std::cerr << "Bundle adjustment failed\n";
+    // std::cerr << "Bundle adjustment failed\n";
     return;
   }
 
-  // convert back to SE3
+// convert back to SE3
   for (const auto & [kf, se3_vec]: kf_poses) {
     Eigen::Matrix4d tf = Sophus::SE3<double>::exp(se3_vec).matrix();
     kf->set_world_to_camera(tf);
   }
 
-  // update the map points
+// update the map points
   for (const auto & mp: mappoints) {
     mp->update_position();
   }
@@ -331,14 +353,79 @@ void Map::local_bundle_adjustment(PinholeModel model)
   for (const auto & mp: map_points) {
     mp->set_position(points[mp]);
   }
-
 }
 
-size_t Map::get_edge(
+std::vector<Map::MapEdge> Map::get_essential_graph()
+{
+  std::vector<MapEdge> edges;
+
+  // create MST, this is an adaptation of prims algorithm
+  std::unordered_set<KeyFramePtr> in_mst;
+  std::priority_queue<MapEdge> max_queue;
+  in_mst.insert(keyframes[0]);
+  for (const auto & kf2: covisibility[keyframes[0]]) {
+    max_queue.push(get_edge(keyframes[0], kf2).value());
+  }
+
+  while (!max_queue.empty()) {
+    const auto edge = max_queue.top();
+    max_queue.pop();
+
+    if (edge.shared < 100) {
+      // this edge will be added later
+      edges.push_back(edge);
+    }
+
+    // because of the way edges are stored we don't know which end is in the MST already.
+    std::optional<KeyFramePtr> vertex_added{std::nullopt};
+    if (in_mst.find(edge.key_frame_1) == in_mst.end() &&
+      in_mst.find(edge.key_frame_2) != in_mst.end())
+    {
+      // key frame 1 is not in the mst and key frame 2 is
+      vertex_added = edge.key_frame_1;
+    } else if (in_mst.find(edge.key_frame_2) == in_mst.end() &&
+      in_mst.find(edge.key_frame_1) != in_mst.end())
+    {
+      // key frame 2 is not in the mst and key frame 1 is
+      vertex_added = edge.key_frame_2;
+    }
+
+    // both ends of the edge may be in the graph in which no edge/vertex is added
+    if (vertex_added.has_value()) {
+      const auto kf = vertex_added.value();
+      in_mst.insert(kf);
+      for (const auto & kf2: covisibility[kf]) {
+        if (in_mst.find(kf2) == in_mst.end()) {
+          max_queue.push(get_edge(kf, kf2).value());
+        }
+      }
+    }
+  }
+
+  //edges now contains the MST, add the covisibility edges with shared >= 100
+  for (const auto & edge: covisibility_edge | std::views::values) {
+    if (edge.shared >= 100) {
+      edges.push_back(edge);
+    }
+  }
+
+  return edges;
+}
+
+std::optional<Map::MapEdge> Map::get_edge(KeyFramePtr key_frame_1, KeyFramePtr key_frame_2)
+{
+  const auto pair = edge_order(key_frame_1, key_frame_2);
+  if (covisibility_edge.find(pair) == covisibility_edge.end()) {
+    return {};
+  }
+  return covisibility_edge[pair];
+}
+
+size_t Map::shared_count(
   std::shared_ptr<KeyFrame> key_frame_1,
   std::shared_ptr<KeyFrame> key_frame_2)
 {
-  return covisibility_edge[edge_order(key_frame_1, key_frame_2)];
+  return covisibility_edge[edge_order(key_frame_1, key_frame_2)].shared;
 }
 
 void Map::insert_edge(
@@ -348,7 +435,12 @@ void Map::insert_edge(
 {
   covisibility[key_frame_1].push_back(key_frame_2);
   covisibility[key_frame_2].push_back(key_frame_1);
-  covisibility_edge[edge_order(key_frame_1, key_frame_2)] = count;
+  const auto order = edge_order(key_frame_1, key_frame_2);
+  covisibility_edge[order] = {
+    .key_frame_1 = key_frame_1,
+    .key_frame_2 = key_frame_2,
+    .shared = count
+  };
 }
 
 std::pair<KeyFramePtr, KeyFramePtr> Map::edge_order(

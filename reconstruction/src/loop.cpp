@@ -26,6 +26,25 @@ void LoopCloser::detect_loops(KeyFramePtr key_frame)
   }
 }
 
+void LoopCloser::remove_key_frame(KeyFramePtr key_frame)
+{
+  for (auto & group: key_frame_groups) {
+    if (group.key_frames.find(key_frame) != group.key_frames.end()) {
+      group.should_delete = true;
+    }
+  }
+
+  key_frame_groups.erase(
+    std::remove_if(
+      key_frame_groups.begin(), key_frame_groups.end(),
+      [](const auto & group) {
+        return group.should_delete;
+      }
+    ),
+    key_frame_groups.end()
+  );
+}
+
 std::vector<KeyFramePtr> LoopCloser::detect_candidate_keyframes(KeyFramePtr key_frame)
 {
   // get neighbors in the covisibility graph
@@ -65,7 +84,7 @@ std::vector<LoopCloser::KeyFrameGroup> LoopCloser::find_groups(
 
     for (const auto & [idx, candidate]: std::views::enumerate(candidates)) {
       if (!in_group[idx]) {
-        const auto & candidate_cov = map->get_neighbors(candidate, 60);
+        const auto & candidate_cov = map->get_neighbors(candidate, 15);
         if (group.covisibility.find(candidate) != group.covisibility.end()) {
           // is the candidate in the group directly
           group.expanded = true;
@@ -150,6 +169,8 @@ std::optional<LoopCloser::KeyFrameGroup> LoopCloser::group_geometric_check(
   std::vector<LoopCloser::KeyFrameGroup> & groups
 )
 {
+  std::optional<KeyFrameGroup> passed{std::nullopt};
+
   for (auto & group: groups) {
     // get all the map points in the group
     for (const auto & kf: group.key_frames) {
@@ -162,11 +183,12 @@ std::optional<LoopCloser::KeyFrameGroup> LoopCloser::group_geometric_check(
 
     // create a cv::Mat of the descriptors for all the map points
     cv::Mat descriptors;
+    auto match = cv::BFMatcher::create(cv::NORM_HAMMING, true);
     for (const auto & mp: map_points) {
       descriptors.push_back(mp->description());
     }
     std::vector<cv::DMatch> matches;
-    matcher->match(key_frame->get_descriptors_mat(), descriptors, matches);
+    match->match(key_frame->get_descriptors_mat(), descriptors, matches);
 
     // get 2D-3D correspondences
     std::vector<cv::Point2d> image_points;
@@ -186,9 +208,12 @@ std::optional<LoopCloser::KeyFrameGroup> LoopCloser::group_geometric_check(
           return inlier > 0;
         });
 
-      if (count > 30) {
+      if (count > options.inlier_threshold) {
         group.T_wk = transformation;
-        return group;
+        passed = group;
+        break;
+      } else {
+        group.should_delete = true;
       }
 
     } catch (cv::Exception & e) {
@@ -196,7 +221,18 @@ std::optional<LoopCloser::KeyFrameGroup> LoopCloser::group_geometric_check(
     }
   }
 
-  return {};
+  // remove groups that failed the check
+  key_frame_groups.erase(
+    std::remove_if(
+      key_frame_groups.begin(), key_frame_groups.end(),
+      [](const auto & group) {
+        return group.should_delete;
+      }
+    ),
+    key_frame_groups.end()
+  );
+
+  return passed;
 }
 
 void LoopCloser::close_loop(KeyFramePtr key_frame, KeyFrameGroup & group)
@@ -218,7 +254,6 @@ void LoopCloser::close_loop(KeyFramePtr key_frame, KeyFrameGroup & group)
       group_map_points.insert(mps.begin(), mps.end());
     }
   }
-
 
   auto visibile_map_points = group_map_points | std::views::filter(
     [&key_frame](const auto & mp) {
@@ -253,6 +288,9 @@ void LoopCloser::close_loop(KeyFramePtr key_frame, KeyFrameGroup & group)
       map->link_keyframe_to_map_point(key_frame, min_idx, mp);
     }
   }
+
+  // get the esseential graph before adding loop edges
+  const auto essential = map->get_essential_graph();
 
   // add edges in the covisibility graph
   const auto neighbors_before = map->get_neighbors(key_frame);
@@ -295,31 +333,18 @@ void LoopCloser::close_loop(KeyFramePtr key_frame, KeyFrameGroup & group)
       a_se3_vec.data(), b_se3_vec.data());
   }
 
-  // get all normal edges to the problem
-  std::vector<std::pair<KeyFramePtr, KeyFramePtr>> normal_edges;
-  for (const auto [pair, count]: map->covisibility_edge) {
-    if (count >= 30) {
-      if (pair.first != key_frame && pair.second != key_frame) {
-        //neither are loop key frame, can't be a loop edge
-        normal_edges.push_back(pair);
-      } else if (pair.first == key_frame &&
-        loop_edge_kfs.find(pair.second) == loop_edge_kfs.end())
-      {
-        // kf is the key frame and nkf is not a loop edge
-        normal_edges.push_back(pair);
-      } else if (pair.second == key_frame &&
-        loop_edge_kfs.find(pair.first) == loop_edge_kfs.end())
-      {
-        // nkf is the key frame and kf is not a loop edge
-        normal_edges.push_back(pair);
-      }
-    }
-  }
+  // add essential graph to the problem
+  for (const auto & edge: essential) {
 
-  // add normal edges to the problem
-  for (const auto & [kf_a, kf_b]: normal_edges) {
+    std::cout << "BEFORE 0" << std::endl;
+    const auto kf_a = edge.key_frame_1;
+    const auto kf_b = edge.key_frame_2;
+
     auto & a_pose = kf_poses[kf_a];
     auto & b_pose = kf_poses[kf_b];
+    std::cout << "AFTER 0" << std::endl;
+
+    std::cout << "BEFORE 1" << std::endl;
 
     Eigen::Matrix4d T_ab;
     if (kf_a == key_frame) {
@@ -329,13 +354,18 @@ void LoopCloser::close_loop(KeyFramePtr key_frame, KeyFrameGroup & group)
     } else {
       T_ab = kf_a->world_to_camera() * kf_b->transform();
     }
+    std::cout << "AFTER 1" << std::endl;
 
+    std::cout << "BEFORE 2" << std::endl;
     ceres::CostFunction * cost_function = PoseGraph3dErrorTerm::Create(
       T_ab);
     problem.AddResidualBlock(
       cost_function, loss_function,
       a_pose.data(), b_pose.data());
+    std::cout << "AFTER 2" << std::endl;
   }
+
+  std::cout << "FINISHED" << std::endl;
 
   // set the loop key frame as constant
   const auto & se3_vec = kf_poses[key_frame];
@@ -369,5 +399,6 @@ void LoopCloser::close_loop(KeyFramePtr key_frame, KeyFrameGroup & group)
   // clear key frame groups
   key_frame_groups.clear();
 }
+
 
 }

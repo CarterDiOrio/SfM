@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <unordered_set>
 #include <opencv2/core/types.hpp>
 #include <opencv2/features2d.hpp>
 #include <ranges>
@@ -101,9 +102,31 @@ std::vector<cv::DMatch> KeyFrame::match(
   const cv::Mat & query_descriptiors,
   const std::shared_ptr<cv::DescriptorMatcher> matcher) const
 {
-  std::vector<cv::DMatch> matches;
-  matcher->match(query_descriptiors, descriptors, matches);
-  return matches;
+  std::vector<std::vector<cv::DMatch>> knn_matches;
+  matcher->knnMatch(query_descriptiors, descriptors, knn_matches, 2);
+
+  const float ratio_thresh = 0.7;
+  std::vector<cv::DMatch> good_matches;
+  for (size_t i = 0; i < knn_matches.size(); i++) {
+    if (knn_matches[i][0].distance < ratio_thresh * knn_matches[i][1].distance) {
+      good_matches.push_back(knn_matches[i][0]);
+    }
+  }
+
+  // eliminate duplicate matches
+  std::vector<size_t> count(static_cast<size_t>(descriptors.rows), 0);
+  std::vector<cv::DMatch> cross_checked;
+  for (const auto & match: good_matches) {
+    count[match.trainIdx]++;
+  }
+
+  for (const auto & match: good_matches) {
+    if (count[match.trainIdx] <= 1) {
+      cross_checked.push_back(match);
+    }
+  }
+
+  return cross_checked;
 }
 
 bool KeyFrame::link_map_point(size_t kp_idx, std::shared_ptr<MapPoint> map_point)
@@ -238,16 +261,12 @@ bool KeyFrame::point_in_frame(const MapPoint & point) const
     K, T_kw, point.position());
 
   // is within image bounds
-  if (p.x < 0 || p.x > img.cols) {
-    return false;
-  }
-
-  if (p.y < 0 || p.y > img.rows) {
+  if (p.x < 0 || p.x > img.cols || p.y < 0 || p.y > img.rows) {
     return false;
   }
 
   // is in front of the camera
-  const auto camera_point = T_kw * point.position().homogeneous();
+  const auto camera_point = (T_kw * point.position().homogeneous()).head<3>();
   if (camera_point.z() < 0) {
     return false;
   }
@@ -263,11 +282,11 @@ bool KeyFrame::point_in_frame(const MapPoint & point) const
   mean_ray /= point.get_keyframes().size();
   mean_ray.normalize();
 
-  Eigen::Vector3d ray = (T_kw * point.position().homogeneous()).head<3>().normalized();
-
+  Eigen::Vector3d ray = camera_point.normalized();
   if (mean_ray.dot(ray) < std::cos(1.0472)) {
     return false;
   }
+
 
   return true;
 }
