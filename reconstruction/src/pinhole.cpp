@@ -3,7 +3,7 @@
 #include <opencv2/core/types.hpp>
 
 
-namespace sfm
+namespace sfm::model
 {
 Eigen::Vector3d deproject_pixel_to_point(const PinholeModel & model, int px, int py, double depth)
 {
@@ -18,30 +18,26 @@ Eigen::Vector3d deproject_pixel_to_point(const PinholeModel & model, int px, int
     depth
   };
 
-  // that point is where the z axis is forward
-  // Eigen::Matrix3d t;
-  // t <<
-  //   0.0, 0.0, 1.0,
-  //   0.0, 1.0, 0.0,
-  //   1.0, 0.0, 0.0;
-
-  // Eigen::Vector3d deprojected = t * point;
   return point;
 }
 
-cv::Point2d project_pixel_to_point(
+cv::Point2d project_point_to_pixel(
   const PinholeModel & model,
-  const Eigen::Matrix4d transform,
-  const Eigen::Vector3d & world_point)
+  const Eigen::Matrix4d & world_to_camera_tf,
+  const Eigen::Vector3d & point)
 {
-  const auto camera_point = transform * world_point.homogeneous(); // transform point into camera frame
-  const auto x = camera_point(0);
-  const auto y = camera_point(1);
-  const auto depth = camera_point(2);
+  const Eigen::Vector4d point_camera = world_to_camera_tf * point.homogeneous();
   return {
-    (x / depth) * model.fx + model.cx,
-    (y / depth) * model.fy + model.cy
+    (point_camera(0) / point_camera(2)) * model.fx + model.cx,
+    (point_camera(1) / point_camera(2)) * model.fy + model.cy
   };
+}
+
+Eigen::Vector3d deproject_pixel_to_point(
+  const PinholeModel & model, cv::Point2d point,
+  double depth)
+{
+  return deproject_pixel_to_point(model, point.x, point.y, depth);
 }
 
 cv::Mat model_to_mat(const PinholeModel & model)
@@ -49,6 +45,13 @@ cv::Mat model_to_mat(const PinholeModel & model)
   cv::Mat mat =
     (cv::Mat_<double>(3, 3) << model.fx, 0.0, model.cx, 0.0, model.fy, model.cy, 0.0, 0.0,
     1.0);
+  return mat;
+}
+
+Eigen::Matrix3d model_to_eigen(const PinholeModel & model)
+{
+  Eigen::Matrix3d mat;
+  mat << model.fx, 0.0, model.cx, 0.0, model.fy, model.cy, 0.0, 0.0, 1.0;
   return mat;
 }
 

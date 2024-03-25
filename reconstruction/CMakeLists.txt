@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
-set(CMAKE_C_COMPILER "/usr/bin/clang-17")
-set(CMAKE_CXX_COMPILER "/usr/bin/clang++-17")
+set(CMAKE_C_COMPILER "/usr/bin/clang-18")
+set(CMAKE_CXX_COMPILER "/usr/bin/clang++-18")
 set(CMAKE_CXX_FLAGS "-O3")
 
 project(reconstruction)
@@ -15,16 +15,11 @@ find_package(Boost 1.40 COMPONENTS program_options REQUIRED)
 
 add_executable(reconstruct 
                 src/reconstruct.cpp 
-                src/features.cpp 
-                src/map.cpp
-                src/mappoint.cpp
-                src/keyframe.cpp
                 src/recording.cpp
                 src/pinhole.cpp
-                src/sfm.cpp
-                src/loop.cpp
-                src/place_recognition.cpp
-                src/dense_reconstruction.cpp)
+                src/tracker.cpp
+                src/frame.cpp
+                src/features.cpp)
 
 target_compile_features(reconstruct PUBLIC cxx_std_23)
 
